@@ -1,0 +1,2 @@
+# Path: OfflineFaceAuth/deploy/aws/lambda/sync-handler/package.json
+# Purpose: Lambda handler dependencies with minimal aws-sdk (bundled), uuid for conflict detection.

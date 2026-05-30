@@ -1,0 +1,2 @@
+# Path: OfflineFaceAuth/.github/workflows/ci-android.yml
+# Purpose: GitHub Actions workflow that builds Android APK on every PR, runs lint + unit tests, uploads .apk artifact.

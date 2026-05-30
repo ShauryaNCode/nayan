@@ -1,0 +1,2 @@
+# Path: OfflineFaceAuth/.github/workflows/ci-ios.yml
+# Purpose: GitHub Actions workflow that builds iOS archive on macOS runner, runs lint + unit tests, validates Xcode signing.

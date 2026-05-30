@@ -1,0 +1,2 @@
+# Path: OfflineFaceAuth/deploy/aws/s3/bucket-policy.json
+# Purpose: S3 bucket policy restricting write access to Lambda execution role, enabling server-side encryption (SSE-S3).

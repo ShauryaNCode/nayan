@@ -1,0 +1,2 @@
+# Path: OfflineFaceAuth/tests/fixtures/mock-landmarks.json
+# Purpose: Mock 468-point FaceMesh landmark data with blink, smile, turn-left, turn-right, neutral pose scenarios.

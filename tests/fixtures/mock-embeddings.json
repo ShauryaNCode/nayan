@@ -1,0 +1,2 @@
+# Path: OfflineFaceAuth/tests/fixtures/mock-embeddings.json
+# Purpose: Mock 128-D embedding vectors for unit tests with 10 same-person variants (similarity above 0.85), 10 different-person vectors.

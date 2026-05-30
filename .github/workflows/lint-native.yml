@@ -1,0 +1,2 @@
+# Path: OfflineFaceAuth/.github/workflows/lint-native.yml
+# Purpose: GitHub Actions workflow that runs clang-tidy and cppcheck on all C++ source files in cpp/ directory.

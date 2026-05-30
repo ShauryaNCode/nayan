@@ -1,0 +1,2 @@
+# Path: OfflineFaceAuth/deploy/aws/cloudformation/template.yml
+# Purpose: CloudFormation template provisioning S3 bucket, Lambda functions, IAM roles, API Gateway for sync endpoint.

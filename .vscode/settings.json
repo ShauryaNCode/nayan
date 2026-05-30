@@ -1,0 +1,14 @@
+{
+  "tomcatAutoDeploy.catalinaHome": "",
+  "tomcatAutoDeploy.javaHome": "",
+  "tomcatAutoDeploy.port": 8080,
+  "tomcatAutoDeploy.debugPort": 5005,
+  "tomcatAutoDeploy.redirectPort": 8443,
+  "tomcatAutoDeploy.manualPortConfig": false,
+  "tomcatAutoDeploy.contextPath": "/",
+  "tomcatAutoDeploy.javaSourceRoot": "src/main/java",
+  "tomcatAutoDeploy.webContentRoot": "src/main/webapp",
+  "tomcatAutoDeploy.resourceRoot": "src/main/resources",
+  "tomcatAutoDeploy.classpath": [],
+  "tomcatAutoDeploy.javaOpts": "-Dfile.encoding=UTF-8"
+}

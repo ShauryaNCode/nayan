@@ -1,0 +1,2 @@
+# Path: OfflineFaceAuth/.github/workflows/e2e-detox.yml
+# Purpose: GitHub Actions workflow that runs Detox end-to-end tests on Android emulator, generates test report artifact.

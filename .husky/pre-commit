@@ -1,0 +1,2 @@
+# Path: OfflineFaceAuth/.husky/pre-commit
+# Purpose: Husky pre-commit hook that runs lint-staged (ESLint + Prettier) on changed JS/TS files before each commit.

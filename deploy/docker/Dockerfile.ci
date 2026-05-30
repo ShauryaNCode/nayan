@@ -1,0 +1,2 @@
+# Path: OfflineFaceAuth/deploy/docker/Dockerfile.ci
+# Purpose: CI Docker image with Node.js, Android SDK, NDK r25+, CMake, JDK for headless Android builds in CI pipeline.

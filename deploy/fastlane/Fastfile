@@ -1,0 +1,2 @@
+# Path: OfflineFaceAuth/deploy/fastlane/Fastfile
+# Purpose: Fastlane configuration with lanes for Android (build_apk, distribute_firebase) and iOS (build_ipa, distribute_testflight).

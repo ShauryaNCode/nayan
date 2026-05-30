@@ -1,0 +1,2 @@
+# Path: OfflineFaceAuth/deploy/aws/lambda/authorizer/package.json
+# Purpose: Authorizer Lambda dependencies with aws-sdk for S3 pre-signed URL generation.

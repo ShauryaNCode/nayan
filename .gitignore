@@ -1,0 +1,45 @@
+# Dependencies
+node_modules/
+
+# Environment and local machine state
+.env
+.env.*
+android/local.properties
+
+# React Native / Metro
+*.jsbundle
+*.bundle
+
+# Android build output
+android/.idea/
+android/.gradle/
+android/build/
+android/app/build/
+android/app/.cxx/
+android/app/.externalNativeBuild/
+
+# iOS build output
+ios/Pods/
+ios/build/
+ios/DerivedData/
+*.xcworkspace/xcuserdata/
+*.xcodeproj/xcuserdata/
+
+# Native build output
+cmake-build-*/
+*.o
+*.a
+*.so
+*.dylib
+
+# Logs and caches
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.cache/
+
+# Editor local state
+.idea/workspace.xml
+.idea/deviceManager.xml
+.vscode/.react/

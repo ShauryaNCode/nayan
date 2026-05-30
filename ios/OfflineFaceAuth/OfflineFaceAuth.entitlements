@@ -1,0 +1,2 @@
+# Path: OfflineFaceAuth/ios/OfflineFaceAuth/OfflineFaceAuth.entitlements
+# Purpose: iOS entitlements with Keychain access groups for Secure Enclave key storage, no network entitlements needed.

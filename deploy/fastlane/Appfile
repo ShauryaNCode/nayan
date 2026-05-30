@@ -1,0 +1,2 @@
+# Path: OfflineFaceAuth/deploy/fastlane/Appfile
+# Purpose: Fastlane app identifiers with Android package name, iOS bundle ID, Apple Developer Team ID.

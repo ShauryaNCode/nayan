@@ -1,0 +1,2 @@
+# Path: OfflineFaceAuth/.husky/commit-msg
+# Purpose: Husky commit-msg hook that enforces conventional commit format (feat/fix/chore/docs) via commitlint.
