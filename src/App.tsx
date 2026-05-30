@@ -9,6 +9,7 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
+import {startConnectivityWatcher} from './sync/connectivity/ConnectivityWatcher';
 
 type OfflineFaceAuthResult = {
   accepted: boolean;
@@ -101,6 +102,13 @@ export default function App(): React.JSX.Element {
   const [enginePresent, setEnginePresent] = useState<boolean>(false);
   const [initialized, setInitialized] = useState<boolean>(false);
   const [consoleOutput, setConsoleOutput] = useState<string>('Booting verification harness...');
+
+  useEffect(() => {
+    const unsubscribe = startConnectivityWatcher();
+    return () => {
+      unsubscribe();
+    };
+  }, []);
 
   const refreshStatus = useCallback(() => {
     const engine = readGlobalEngine();
