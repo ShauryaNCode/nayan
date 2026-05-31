@@ -11,6 +11,7 @@ import {
 } from 'react-native';
 
 import {
+  runMMKVSmokeTest,
   runSQLCipherSmokeTest,
   type SmokeTestResult,
 } from './storage/database/SmokeTest';
@@ -140,6 +141,22 @@ function formatSmokeTestResult(result: SmokeTestResult): string {
   ].join('\n');
 }
 
+function formatStorageSmokeTestResults(
+  sqlCipherResult: SmokeTestResult,
+  mmkvResult: SmokeTestResult,
+): string {
+  return [
+    formatSmokeTestResult(sqlCipherResult),
+    '',
+    `MMKV smoke test: ${mmkvResult.passed ? 'PASS' : 'FAIL'}`,
+    `Duration: ${mmkvResult.durationMs}ms`,
+    ...mmkvResult.steps.map((step) => {
+      const status = step.passed ? 'PASS' : 'FAIL';
+      return `${status} ${step.name}: ${step.detail}`;
+    }),
+  ].join('\n');
+}
+
 export default function App(): React.JSX.Element {
   const [enginePresent, setEnginePresent] = useState<boolean>(false);
   const [initialized, setInitialized] = useState<boolean>(false);
@@ -236,15 +253,18 @@ export default function App(): React.JSX.Element {
 
   const handleStorageSmokeTest = useCallback(async () => {
     setStorageTestRunning(true);
-    setConsoleOutput('Running SQLCipher smoke test...');
+    setConsoleOutput('Running SQLCipher + MMKV smoke tests...');
 
     try {
-      const result = await runSQLCipherSmokeTest();
-      setConsoleOutput(formatSmokeTestResult(result));
+      const sqlCipherResult = await runSQLCipherSmokeTest();
+      const mmkvResult = runMMKVSmokeTest();
+      setConsoleOutput(
+        formatStorageSmokeTestResults(sqlCipherResult, mmkvResult),
+      );
     } catch (error) {
       const message =
         error instanceof Error ? error.stack ?? error.message : String(error);
-      setConsoleOutput(`SQLCipher smoke test failure:\n${message}`);
+      setConsoleOutput(`Storage smoke test failure:\n${message}`);
     } finally {
       setStorageTestRunning(false);
     }
@@ -300,8 +320,8 @@ export default function App(): React.JSX.Element {
         >
           <Text style={styles.buttonText}>
             {storageTestRunning
-              ? 'Running SQLCipher Smoke Test'
-              : 'Run SQLCipher Smoke Test'}
+              ? 'Running Storage Smoke Tests'
+              : 'Run Storage Smoke Tests'}
           </Text>
         </TouchableOpacity>
 

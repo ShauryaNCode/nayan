@@ -12,7 +12,12 @@
  *
  * Returns structured results for the UI to display.
  */
-import {isSQLCipher, open, type DB} from '@op-engineering/op-sqlite';
+import {
+  isSQLCipher,
+  open,
+  type OPSQLiteConnection as DB,
+} from '@op-engineering/op-sqlite';
+import {MMKV} from 'react-native-mmkv';
 
 import {configurePhase0Pragmas} from './DatabaseManager';
 
@@ -30,10 +35,20 @@ export interface SmokeTestResult {
 
 const TEST_DB_NAME = 'nayan_smoke_test.db';
 const TEST_ENCRYPTION_KEY = 'phase0-smoke-test-key-do-not-use-in-prod';
+const TEST_MMKV_ID = 'nayan.phase0.mmkv.smoke';
 
 function getFirstRow(rows: unknown): any | undefined {
   if (Array.isArray(rows)) {
     return rows[0];
+  }
+
+  if (
+    rows &&
+    typeof rows === 'object' &&
+    '_array' in rows &&
+    Array.isArray(rows._array)
+  ) {
+    return rows._array[0];
   }
 
   if (
@@ -123,25 +138,42 @@ export async function runSQLCipherSmokeTest(): Promise<SmokeTestResult> {
       return buildResult(steps, startTime);
     }
 
-    // Step 4: Enable WAL mode for concurrent local writers/readers.
+    // Step 4: Initialize PRAGMAs before schema migration or app statements.
     try {
       const pragmaState = configurePhase0Pragmas(db);
       const walEnabled = pragmaState.journalMode === 'wal';
+      const synchronousNormal = pragmaState.synchronous === 1;
       const autocheckpointEnabled = pragmaState.walAutocheckpoint === 100;
+      const cacheSized = pragmaState.cacheSizeKiB === -8000;
+      const foreignKeysEnabled = pragmaState.foreignKeys;
       steps.push({
-        name: 'Enable WAL mode',
-        passed: walEnabled && autocheckpointEnabled,
+        name: 'Initialize database PRAGMAs',
+        passed:
+          walEnabled &&
+          synchronousNormal &&
+          autocheckpointEnabled &&
+          cacheSized &&
+          foreignKeysEnabled,
         detail:
           `journal_mode=${pragmaState.journalMode}; ` +
-          `wal_autocheckpoint=${pragmaState.walAutocheckpoint}`,
+          `synchronous=${pragmaState.synchronous}; ` +
+          `wal_autocheckpoint=${pragmaState.walAutocheckpoint}; ` +
+          `cache_size=${pragmaState.cacheSizeKiB}; ` +
+          `foreign_keys=${String(pragmaState.foreignKeys)}`,
       });
 
-      if (!walEnabled || !autocheckpointEnabled) {
+      if (
+        !walEnabled ||
+        !synchronousNormal ||
+        !autocheckpointEnabled ||
+        !cacheSized ||
+        !foreignKeysEnabled
+      ) {
         return buildResult(steps, startTime);
       }
     } catch (error) {
       steps.push({
-        name: 'Enable WAL mode',
+        name: 'Initialize database PRAGMAs',
         passed: false,
         detail: `Failed: ${String(error)}`,
       });
@@ -293,6 +325,153 @@ export async function runSQLCipherSmokeTest(): Promise<SmokeTestResult> {
         // Ignore close errors in cleanup
       }
     }
+  }
+
+  return buildResult(steps, startTime);
+}
+
+export function runMMKVSmokeTest(): SmokeTestResult {
+  const steps: SmokeTestStep[] = [];
+  const startTime = Date.now();
+  const keys = {
+    string: 'phase0.string',
+    number: 'phase0.number',
+    boolean: 'phase0.boolean',
+    buffer: 'phase0.buffer',
+  };
+
+  let storage: MMKV | null = null;
+
+  try {
+    try {
+      storage = new MMKV({id: TEST_MMKV_ID});
+      steps.push({
+        name: 'Open MMKV store',
+        passed: true,
+        detail: `MMKV instance "${TEST_MMKV_ID}" opened`,
+      });
+    } catch (error) {
+      steps.push({
+        name: 'Open MMKV store',
+        passed: false,
+        detail: `Failed: ${String(error)}`,
+      });
+      return buildResult(steps, startTime);
+    }
+
+    try {
+      storage.set(keys.string, 'Phase Zero MMKV Test');
+      storage.set(keys.number, 73.6);
+      storage.set(keys.boolean, true);
+      storage.set(keys.buffer, new Uint8Array([78, 65, 89, 65, 78]));
+      steps.push({
+        name: 'Write values',
+        passed: true,
+        detail: 'Stored string, number, boolean, and buffer values',
+      });
+    } catch (error) {
+      steps.push({
+        name: 'Write values',
+        passed: false,
+        detail: `Failed: ${String(error)}`,
+      });
+      return buildResult(steps, startTime);
+    }
+
+    try {
+      const stringValue = storage.getString(keys.string);
+      const numberValue = storage.getNumber(keys.number);
+      const booleanValue = storage.getBoolean(keys.boolean);
+      const bufferValue = storage.getBuffer(keys.buffer);
+      const bufferText = bufferValue
+        ? String.fromCharCode(...Array.from(bufferValue))
+        : undefined;
+
+      const allMatch =
+        stringValue === 'Phase Zero MMKV Test' &&
+        numberValue === 73.6 &&
+        booleanValue === true &&
+        bufferText === 'NAYAN';
+
+      steps.push({
+        name: 'Read back & assert',
+        passed: allMatch,
+        detail: allMatch
+          ? 'All 4 MMKV values match'
+          : `Mismatch! string:${stringValue} number:${numberValue} boolean:${booleanValue} buffer:${bufferText}`,
+      });
+
+      if (!allMatch) {
+        return buildResult(steps, startTime);
+      }
+    } catch (error) {
+      steps.push({
+        name: 'Read back & assert',
+        passed: false,
+        detail: `Failed: ${String(error)}`,
+      });
+      return buildResult(steps, startTime);
+    }
+
+    try {
+      const containsAll =
+        storage.contains(keys.string) &&
+        storage.contains(keys.number) &&
+        storage.contains(keys.boolean) &&
+        storage.contains(keys.buffer);
+
+      steps.push({
+        name: 'Verify keys exist',
+        passed: containsAll,
+        detail: containsAll
+          ? 'MMKV contains all smoke-test keys'
+          : 'One or more MMKV smoke-test keys are missing',
+      });
+
+      if (!containsAll) {
+        return buildResult(steps, startTime);
+      }
+    } catch (error) {
+      steps.push({
+        name: 'Verify keys exist',
+        passed: false,
+        detail: `Failed: ${String(error)}`,
+      });
+      return buildResult(steps, startTime);
+    }
+
+    try {
+      storage.delete(keys.string);
+      storage.delete(keys.number);
+      storage.delete(keys.boolean);
+      storage.delete(keys.buffer);
+
+      const cleanedUp =
+        !storage.contains(keys.string) &&
+        !storage.contains(keys.number) &&
+        !storage.contains(keys.boolean) &&
+        !storage.contains(keys.buffer);
+
+      steps.push({
+        name: 'Cleanup keys',
+        passed: cleanedUp,
+        detail: cleanedUp
+          ? 'Smoke-test keys deleted'
+          : 'One or more smoke-test keys remain after cleanup',
+      });
+    } catch (error) {
+      steps.push({
+        name: 'Cleanup keys',
+        passed: false,
+        detail: `Failed: ${String(error)}`,
+      });
+    }
+  } catch (error) {
+    steps.push({
+      name: 'Unexpected error',
+      passed: false,
+      detail: String(error),
+    });
   }
 
   return buildResult(steps, startTime);
