@@ -1,2 +1,15 @@
-# Path: OfflineFaceAuth/src/sync/connectivity/ConnectivityWatcher.ts
-# Purpose: NetInfo connectivity watcher with event listener for CONNECTED/DISCONNECTED, captive portal detection via HEAD request.
+import NetInfo, { NetInfoState } from '@react-native-community/netinfo';
+
+export const startConnectivityWatcher = (): (() => void) => {
+  console.log('ConnectivityWatcher: Starting...');
+  
+  const unsubscribe = NetInfo.addEventListener((state: NetInfoState) => {
+    if (state.isConnected && state.isInternetReachable) {
+      console.log('CONNECTED');
+    } else {
+      console.log('DISCONNECTED');
+    }
+  });
+
+  return unsubscribe;
+};

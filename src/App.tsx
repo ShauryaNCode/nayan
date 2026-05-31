@@ -9,6 +9,7 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
+import {startConnectivityWatcher} from './sync/connectivity/ConnectivityWatcher';
 
 import {CameraView} from './components/camera/CameraView';
 
@@ -113,6 +114,13 @@ export default function App(): React.JSX.Element {
   const [initialized, setInitialized] = useState<boolean>(false);
   const [previewReady, setPreviewReady] = useState<boolean>(false);
   const [consoleOutput, setConsoleOutput] = useState<string>('Booting verification harness...');
+
+  useEffect(() => {
+    const unsubscribe = startConnectivityWatcher();
+    return () => {
+      unsubscribe();
+    };
+  }, []);
 
   const refreshStatus = useCallback(() => {
     const engine = readGlobalEngine();
