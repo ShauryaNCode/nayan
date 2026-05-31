@@ -1,2 +1,14 @@
-# Path: OfflineFaceAuth/cpp/landmarks/HeadPoseEstimator.h
-# Purpose: 3D head-pose estimator header deriving Yaw, Pitch, Roll from PnP using 6 canonical nose/chin/eye landmarks.
+#pragma once
+
+#include "FaceMeshEngine.h"
+
+namespace offlineface::landmarks {
+
+class HeadPoseEstimator {
+ public:
+  static HeadPose Estimate(const FaceLandmarks& landmarks,
+                           uint32_t frameWidth,
+                           uint32_t frameHeight);
+};
+
+}  // namespace offlineface::landmarks

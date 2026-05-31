@@ -1,2 +1,11 @@
-# Path: OfflineFaceAuth/cpp/landmarks/HeadPoseEstimator.cpp
-# Purpose: Head-pose implementation with OpenCV-free Levenberg-Marquardt PnP solver, camera intrinsic estimation from frame dimensions.
+#include "HeadPoseEstimator.h"
+
+namespace offlineface::landmarks {
+
+HeadPose HeadPoseEstimator::Estimate(const FaceLandmarks& landmarks,
+                                     uint32_t frameWidth,
+                                     uint32_t frameHeight) {
+  return FaceMeshEngine::EstimateHeadPose(landmarks, frameWidth, frameHeight);
+}
+
+}  // namespace offlineface::landmarks

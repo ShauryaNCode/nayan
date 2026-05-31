@@ -16,6 +16,7 @@
 namespace offlineface::frameprocessor {
 namespace {
 using namespace std::chrono_literals;
+using Clock = std::chrono::steady_clock;
 }
 
 FrameProcessorPlugin::FrameProcessorPlugin(
@@ -114,6 +115,23 @@ void FrameProcessorPlugin::SetLivenessState(NativeLivenessState state) {
   livenessState_.store(static_cast<int>(state), std::memory_order_release);
 }
 
+void FrameProcessorPlugin::SetLivenessChallenge(
+    NativeLivenessChallenge challenge) {
+  std::lock_guard<std::mutex> lock(fsmMutex_);
+  if (challenge == NativeLivenessChallenge::kNone) {
+    livenessFsm_.Reset();
+    livenessState_.store(
+        static_cast<int>(NativeLivenessState::kIdle),
+        std::memory_order_release);
+    return;
+  }
+
+  livenessFsm_.StartChallenge(ToFSMChallenge(challenge));
+  livenessState_.store(
+      static_cast<int>(NativeLivenessState::kChallengeActive),
+      std::memory_order_release);
+}
+
 bool FrameProcessorPlugin::SubmitFrameCopy(const uint8_t* source,
                                            uint32_t width,
                                            uint32_t height,
@@ -174,6 +192,24 @@ void FrameProcessorPlugin::ProcessCurrentFrame(FrameBuffer* frame) {
 
   const auto faceMeshResult =
       interpreterManager_->RunFaceMesh(enhanced.data(), width, height, width);
+  offlineface::landmarks::FaceMetrics metrics{};
+  metrics.faceDetected = faceMeshResult.faceDetected;
+  metrics.ear = faceMeshResult.eyeAspectRatio;
+  metrics.mar = faceMeshResult.mouthAspectRatio;
+  metrics.yaw = faceMeshResult.yawDegrees;
+  metrics.pitch = faceMeshResult.pitchDegrees;
+  metrics.roll = faceMeshResult.rollDegrees;
+
+  offlineface::landmarks::LivenessSnapshot livenessSnapshot{};
+  {
+    std::lock_guard<std::mutex> lock(fsmMutex_);
+    livenessSnapshot = livenessFsm_.Update(
+        {metrics, Clock::now(), true, true});
+  }
+  livenessState_.store(
+      static_cast<int>(ToNativeState(livenessSnapshot.state)),
+      std::memory_order_release);
+
   const bool runMobileFaceNet =
       faceMeshResult.faceDetected && ShouldRunMobileFaceNet();
 
@@ -195,7 +231,16 @@ void FrameProcessorPlugin::ProcessCurrentFrame(FrameBuffer* frame) {
       replacedFrameCount_.load(std::memory_order_acquire);
   nextResult.faceMeshThreadCount = threadBudget.faceMeshThreads;
   nextResult.mobileFaceNetThreadCount = threadBudget.mobileFaceNetThreads;
-  nextResult.livenessState = GetLivenessState();
+  nextResult.livenessState = ToNativeState(livenessSnapshot.state);
+  nextResult.livenessChallenge =
+      static_cast<NativeLivenessChallenge>(
+          static_cast<int>(livenessSnapshot.challenge));
+  nextResult.faceDetected = faceMeshResult.faceDetected;
+  nextResult.ear = faceMeshResult.eyeAspectRatio;
+  nextResult.mar = faceMeshResult.mouthAspectRatio;
+  nextResult.yaw = faceMeshResult.yawDegrees;
+  nextResult.pitch = faceMeshResult.pitchDegrees;
+  nextResult.roll = faceMeshResult.rollDegrees;
   nextResult.embedding = runMobileFaceNet
                              ? embeddingAverager_->PushEmbedding(timestampNs, embedding)
                              : std::vector<float>{};
@@ -226,6 +271,40 @@ NativeLivenessState FrameProcessorPlugin::GetLivenessState() const {
 
 bool FrameProcessorPlugin::ShouldRunMobileFaceNet() const {
   return GetLivenessState() == NativeLivenessState::kLivenessPass;
+}
+
+NativeLivenessState FrameProcessorPlugin::ToNativeState(
+    offlineface::landmarks::LivenessState state) {
+  switch (state) {
+    case offlineface::landmarks::LivenessState::kIdle:
+      return NativeLivenessState::kIdle;
+    case offlineface::landmarks::LivenessState::kDetected:
+      return NativeLivenessState::kDetected;
+    case offlineface::landmarks::LivenessState::kChallengeActive:
+      return NativeLivenessState::kChallengeActive;
+    case offlineface::landmarks::LivenessState::kLivenessPass:
+      return NativeLivenessState::kLivenessPass;
+    case offlineface::landmarks::LivenessState::kLivenessFail:
+      return NativeLivenessState::kLivenessFail;
+  }
+  return NativeLivenessState::kIdle;
+}
+
+offlineface::landmarks::LivenessChallenge FrameProcessorPlugin::ToFSMChallenge(
+    NativeLivenessChallenge challenge) {
+  switch (challenge) {
+    case NativeLivenessChallenge::kBlink:
+      return offlineface::landmarks::LivenessChallenge::kBlink;
+    case NativeLivenessChallenge::kSmile:
+      return offlineface::landmarks::LivenessChallenge::kSmile;
+    case NativeLivenessChallenge::kTurnLeft:
+      return offlineface::landmarks::LivenessChallenge::kTurnLeft;
+    case NativeLivenessChallenge::kTurnRight:
+      return offlineface::landmarks::LivenessChallenge::kTurnRight;
+    case NativeLivenessChallenge::kNone:
+      return offlineface::landmarks::LivenessChallenge::kNone;
+  }
+  return offlineface::landmarks::LivenessChallenge::kNone;
 }
 
 float FrameProcessorPlugin::ComputeSharpness(const uint8_t* pixels,

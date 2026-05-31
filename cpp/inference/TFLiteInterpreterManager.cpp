@@ -22,7 +22,22 @@ void TFLiteInterpreterManager::Initialize(const std::string& modelPath) {
   modelPath_ = modelPath;
   ConfigureThreadBudget();
   CreateDelegates();
+  faceMeshEngine_.LoadModel(modelPath);
   initialized_ = true;
+}
+
+bool TFLiteInterpreterManager::InitializeFaceMeshModel(
+    const std::string& modelPath) {
+  std::lock_guard<std::mutex> lock(mutex_);
+  if (modelPath.empty()) {
+    return false;
+  }
+
+  ConfigureThreadBudget();
+  CreateDelegates();
+  modelPath_ = modelPath;
+  initialized_ = true;
+  return faceMeshEngine_.LoadModel(modelPath);
 }
 
 FaceMeshResult TFLiteInterpreterManager::RunFaceMesh(const uint8_t* grayPixels,
@@ -34,7 +49,34 @@ FaceMeshResult TFLiteInterpreterManager::RunFaceMesh(const uint8_t* grayPixels,
     return {};
   }
 
+  if (faceMeshEngine_.IsReady()) {
+    offlineface::landmarks::ImageFrame frame{};
+    frame.pixels = grayPixels;
+    frame.width = width;
+    frame.height = height;
+    frame.stride = stride;
+    frame.channels = 1U;
+    return FromMetrics(faceMeshEngine_.Run(frame));
+  }
+
   return RunMockFaceMesh(grayPixels, width, height, stride);
+}
+
+FaceMeshResult TFLiteInterpreterManager::RunFaceMeshLandmarks(
+    const float* landmarkValues,
+    std::size_t valueCount,
+    uint32_t width,
+    uint32_t height) const {
+  std::lock_guard<std::mutex> lock(mutex_);
+  if (landmarkValues == nullptr || valueCount < 468U * 3U) {
+    return {};
+  }
+
+  const auto landmarks =
+      offlineface::landmarks::FaceMeshEngine::ParseLandmarks(
+          landmarkValues, valueCount);
+  return FromMetrics(offlineface::landmarks::FaceMeshEngine::ComputeMetrics(
+      landmarks, width, height));
 }
 
 std::vector<float> TFLiteInterpreterManager::RunEmbedding(
@@ -96,6 +138,20 @@ FaceMeshResult TFLiteInterpreterManager::RunMockFaceMesh(
   result.eyeAspectRatio = result.faceDetected ? 0.3f : 0.0f;
   result.mouthAspectRatio = result.faceDetected ? 0.2f : 0.0f;
   result.yawDegrees = 0.0f;
+  result.pitchDegrees = 0.0f;
+  result.rollDegrees = 0.0f;
+  return result;
+}
+
+FaceMeshResult TFLiteInterpreterManager::FromMetrics(
+    const offlineface::landmarks::FaceMetrics& metrics) {
+  FaceMeshResult result{};
+  result.faceDetected = metrics.faceDetected;
+  result.eyeAspectRatio = metrics.ear;
+  result.mouthAspectRatio = metrics.mar;
+  result.yawDegrees = metrics.yaw;
+  result.pitchDegrees = metrics.pitch;
+  result.rollDegrees = metrics.roll;
   return result;
 }
 

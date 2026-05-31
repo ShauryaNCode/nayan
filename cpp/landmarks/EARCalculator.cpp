@@ -1,2 +1,9 @@
-# Path: OfflineFaceAuth/cpp/landmarks/EARCalculator.cpp
-# Purpose: EAR computation implementation with Euclidean distance ratios between vertical/horizontal eye landmarks, per-frame float output.
+#include "EARCalculator.h"
+
+namespace offlineface::landmarks {
+
+float EARCalculator::Compute(const FaceLandmarks& landmarks) {
+  return FaceMeshEngine::ComputeEAR(landmarks);
+}
+
+}  // namespace offlineface::landmarks
