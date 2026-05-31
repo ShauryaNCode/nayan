@@ -44,6 +44,8 @@ public final class NativeBridge extends ReactContextBaseJavaModule {
       int stride,
       long timestampNs);
 
+  public static native void nativeSetLivenessState(int state);
+
   @NonNull
   @Override
   public String getName() {
@@ -84,6 +86,26 @@ public final class NativeBridge extends ReactContextBaseJavaModule {
       promise.resolve(accepted);
     } catch (Throwable throwable) {
       promise.reject("E_NATIVE_ENQUEUE", throwable);
+    }
+  }
+
+  @ReactMethod
+  public void setLivenessState(String state, Promise promise) {
+    try {
+      nativeSetLivenessState(resolveLivenessState(state));
+      promise.resolve(null);
+    } catch (Throwable throwable) {
+      promise.reject("E_NATIVE_LIVENESS_STATE", throwable);
+    }
+  }
+
+  @ReactMethod
+  public void setLivenessPassed(boolean passed, Promise promise) {
+    try {
+      nativeSetLivenessState(passed ? 3 : 2);
+      promise.resolve(null);
+    } catch (Throwable throwable) {
+      promise.reject("E_NATIVE_LIVENESS_STATE", throwable);
     }
   }
 
@@ -144,5 +166,26 @@ public final class NativeBridge extends ReactContextBaseJavaModule {
       }
     }
     return false;
+  }
+
+  private static int resolveLivenessState(String state) {
+    if (state == null) {
+      return 0;
+    }
+
+    final String normalized = state.trim().toUpperCase();
+    if ("DETECTED".equals(normalized)) {
+      return 1;
+    }
+    if ("CHALLENGE_ACTIVE".equals(normalized)) {
+      return 2;
+    }
+    if ("LIVENESS_PASS".equals(normalized)) {
+      return 3;
+    }
+    if ("LIVENESS_FAIL".equals(normalized)) {
+      return 4;
+    }
+    return 0;
   }
 }

@@ -13,10 +13,23 @@ import {startConnectivityWatcher} from './sync/connectivity/ConnectivityWatcher'
 
 import {CameraView} from './components/camera/CameraView';
 
+import {
+  runMMKVSmokeTest,
+  runSQLCipherSmokeTest,
+  type SmokeTestResult,
+} from './storage/database/SmokeTest';
+
 type OfflineFaceAuthResult = {
   accepted: boolean;
   timestampNs: number;
   sharpnessScore: number;
+  faceMeshProcessed?: boolean;
+  mobileFaceNetProcessed?: boolean;
+  droppedFrameCount?: number;
+  replacedFrameCount?: number;
+  faceMeshThreadCount?: number;
+  mobileFaceNetThreadCount?: number;
+  livenessState?: number;
   embedding: Float32Array;
   embeddingLength?: number;
   embeddingByteLength?: number;
@@ -25,11 +38,14 @@ type OfflineFaceAuthResult = {
 type OfflineFaceAuthGlobal = {
   getLatestResult: () => OfflineFaceAuthResult;
   isInitialized: () => boolean;
+  setLivenessState?: (state: number) => boolean;
 };
 
 type NativeBridgeModule = {
   initializeEngine: (modelPath?: string) => Promise<void>;
   ensureJsiInstalled: () => Promise<boolean>;
+  setLivenessPassed?: (passed: boolean) => Promise<void>;
+  setLivenessState?: (state: string) => Promise<void>;
 };
 
 declare global {
@@ -70,6 +86,12 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginBottom: 16,
   },
+  secondaryButton: {
+    backgroundColor: '#0f766e',
+  },
+  disabledButton: {
+    opacity: 0.6,
+  },
   buttonText: {color: '#eff6ff', fontSize: 16, fontWeight: '700'},
   console: {
     backgroundColor: '#020617',
@@ -87,7 +109,9 @@ const styles = StyleSheet.create({
   },
 });
 
-const nativeBridge = NativeModules.NativeBridge as NativeBridgeModule | undefined;
+const nativeBridge = NativeModules.NativeBridge as
+  | NativeBridgeModule
+  | undefined;
 
 function readGlobalEngine(): OfflineFaceAuthGlobal | undefined {
   return globalThis.__offlineFaceAuth;
@@ -95,12 +119,19 @@ function readGlobalEngine(): OfflineFaceAuthGlobal | undefined {
 
 function formatResult(result: OfflineFaceAuthResult): string {
   const embeddingArray = Array.from(result.embedding ?? []);
-  const preview = embeddingArray.slice(0, 16).map(value => value.toFixed(6));
+  const preview = embeddingArray.slice(0, 16).map((value) => value.toFixed(6));
   return JSON.stringify(
     {
       accepted: result.accepted,
       timestampNs: result.timestampNs,
       sharpnessScore: result.sharpnessScore,
+      faceMeshProcessed: result.faceMeshProcessed,
+      mobileFaceNetProcessed: result.mobileFaceNetProcessed,
+      droppedFrameCount: result.droppedFrameCount,
+      replacedFrameCount: result.replacedFrameCount,
+      faceMeshThreadCount: result.faceMeshThreadCount,
+      mobileFaceNetThreadCount: result.mobileFaceNetThreadCount,
+      livenessState: result.livenessState,
       embeddingLength: embeddingArray.length,
       embeddingPreview: preview,
     },
@@ -109,9 +140,39 @@ function formatResult(result: OfflineFaceAuthResult): string {
   );
 }
 
+function formatSmokeTestResult(result: SmokeTestResult): string {
+  const lines = result.steps.map((step) => {
+    const status = step.passed ? 'PASS' : 'FAIL';
+    return `${status} ${step.name}: ${step.detail}`;
+  });
+
+  return [
+    `SQLCipher smoke test: ${result.passed ? 'PASS' : 'FAIL'}`,
+    `Duration: ${result.durationMs}ms`,
+    ...lines,
+  ].join('\n');
+}
+
+function formatStorageSmokeTestResults(
+  sqlCipherResult: SmokeTestResult,
+  mmkvResult: SmokeTestResult,
+): string {
+  return [
+    formatSmokeTestResult(sqlCipherResult),
+    '',
+    `MMKV smoke test: ${mmkvResult.passed ? 'PASS' : 'FAIL'}`,
+    `Duration: ${mmkvResult.durationMs}ms`,
+    ...mmkvResult.steps.map((step) => {
+      const status = step.passed ? 'PASS' : 'FAIL';
+      return `${status} ${step.name}: ${step.detail}`;
+    }),
+  ].join('\n');
+}
+
 export default function App(): React.JSX.Element {
   const [enginePresent, setEnginePresent] = useState<boolean>(false);
   const [initialized, setInitialized] = useState<boolean>(false);
+  const [storageTestRunning, setStorageTestRunning] = useState<boolean>(false);
   const [previewReady, setPreviewReady] = useState<boolean>(false);
   const [consoleOutput, setConsoleOutput] = useState<string>('Booting verification harness...');
 
@@ -125,9 +186,10 @@ export default function App(): React.JSX.Element {
   const refreshStatus = useCallback(() => {
     const engine = readGlobalEngine();
     const hasEngine = typeof engine?.getLatestResult === 'function';
-    const isInitialized = hasEngine && typeof engine?.isInitialized === 'function'
-      ? Boolean(engine.isInitialized())
-      : false;
+    const isInitialized =
+      hasEngine && typeof engine?.isInitialized === 'function'
+        ? Boolean(engine.isInitialized())
+        : false;
 
     setEnginePresent(hasEngine);
     setInitialized(isInitialized);
@@ -140,7 +202,9 @@ export default function App(): React.JSX.Element {
     const bootstrap = async () => {
       try {
         if (nativeBridge == null) {
-          throw new Error('NativeBridge module is not registered on NativeModules');
+          throw new Error(
+            'NativeBridge module is not registered on NativeModules',
+          );
         }
 
         await nativeBridge.initializeEngine(MODEL_PATH);
@@ -151,21 +215,26 @@ export default function App(): React.JSX.Element {
           const status = refreshStatus();
           if (status.hasEngine) {
             setConsoleOutput(
-              `Native engine injected.\nInitialized: ${String(status.isInitialized)}\nModel: ${MODEL_PATH}`,
+              `Native engine injected.\nInitialized: ${String(
+                status.isInitialized,
+              )}\nModel: ${MODEL_PATH}`,
             );
             return;
           }
-          await new Promise(resolve => setTimeout(resolve, 50));
+          await new Promise((resolve) => setTimeout(resolve, 50));
         }
 
         const status = refreshStatus();
         setConsoleOutput(
           status.hasEngine
-            ? `Native engine injected.\nInitialized: ${String(status.isInitialized)}\nModel: ${MODEL_PATH}`
+            ? `Native engine injected.\nInitialized: ${String(
+                status.isInitialized,
+              )}\nModel: ${MODEL_PATH}`
             : 'Native engine bootstrap completed, but __offlineFaceAuth is still missing from the JS runtime.',
         );
       } catch (error) {
-        const message = error instanceof Error ? error.stack ?? error.message : String(error);
+        const message =
+          error instanceof Error ? error.stack ?? error.message : String(error);
         setConsoleOutput(`Bootstrap failure:\n${message}`);
       }
     };
@@ -185,31 +254,64 @@ export default function App(): React.JSX.Element {
 
       const result = status.engine.getLatestResult();
       const isTypedArrayReadable =
-        result.embedding instanceof Float32Array && result.embedding.length >= 0;
+        result.embedding instanceof Float32Array &&
+        result.embedding.length >= 0;
 
       setConsoleOutput(
-        `${formatResult(result)}\nFloat32Array readable: ${String(isTypedArrayReadable)}`,
+        `${formatResult(result)}\nFloat32Array readable: ${String(
+          isTypedArrayReadable,
+        )}`,
       );
     } catch (error) {
-      const message = error instanceof Error ? error.stack ?? error.message : String(error);
+      const message =
+        error instanceof Error ? error.stack ?? error.message : String(error);
       setConsoleOutput(`Loopback failure:\n${message}`);
     }
   }, [refreshStatus]);
 
+  const handleStorageSmokeTest = useCallback(async () => {
+    setStorageTestRunning(true);
+    setConsoleOutput('Running SQLCipher + MMKV smoke tests...');
+
+    try {
+      const sqlCipherResult = await runSQLCipherSmokeTest();
+      const mmkvResult = runMMKVSmokeTest();
+      setConsoleOutput(
+        formatStorageSmokeTestResults(sqlCipherResult, mmkvResult),
+      );
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.stack ?? error.message : String(error);
+      setConsoleOutput(`Storage smoke test failure:\n${message}`);
+    } finally {
+      setStorageTestRunning(false);
+    }
+  }, []);
+
   const summary = useMemo(
     () => [
       {label: 'Engine Presence', value: enginePresent ? 'Injected' : 'Missing'},
-      {label: 'Initialization State', value: initialized ? 'Initialized' : 'Not initialized'},
       {label: 'Camera Preview', value: previewReady ? 'Rendering' : 'Waiting'},
-      {label: 'Model Path', value: MODEL_PATH},
-    ],
-    [enginePresent, initialized, previewReady],
+        {
+          label: 'Initialization State',
+          value: initialized ? 'Initialized' : 'Not initialized',
+        },
+        {
+          label: 'Storage Smoke Test',
+          value: storageTestRunning ? 'Running' : 'Ready',
+        },
+        { label: 'Model Path', value: MODEL_PATH },
+      ],
+      [enginePresent, previewReady, initialized, storageTestRunning],
   );
 
   return (
     <SafeAreaView style={styles.root}>
       <StatusBar barStyle="light-content" />
-      <ScrollView contentInsetAdjustmentBehavior="automatic" contentContainerStyle={styles.scrollContent}>
+      <ScrollView
+        contentInsetAdjustmentBehavior="automatic"
+        contentContainerStyle={styles.scrollContent}
+      >
         <Text style={styles.header}>Offline FaceAuth Harness</Text>
         <Text style={styles.subheader}>
           Verifies JNI bootstrap, JSI injection, and zero-copy embedding access.
@@ -223,7 +325,7 @@ export default function App(): React.JSX.Element {
           />
         </View>
 
-        {summary.map(item => (
+        {summary.map((item) => (
           <View key={item.label} style={styles.card}>
             <Text style={styles.label}>{item.label}</Text>
             <Text style={styles.value}>{item.value}</Text>
@@ -232,6 +334,22 @@ export default function App(): React.JSX.Element {
 
         <TouchableOpacity style={styles.button} onPress={handleLoopback}>
           <Text style={styles.buttonText}>Read Latest Native Result</Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          disabled={storageTestRunning}
+          style={[
+            styles.button,
+            styles.secondaryButton,
+            storageTestRunning && styles.disabledButton,
+          ]}
+          onPress={handleStorageSmokeTest}
+        >
+          <Text style={styles.buttonText}>
+            {storageTestRunning
+              ? 'Running Storage Smoke Tests'
+              : 'Run Storage Smoke Tests'}
+          </Text>
         </TouchableOpacity>
 
         <View style={styles.console}>

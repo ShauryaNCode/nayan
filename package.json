@@ -11,6 +11,7 @@
     "test:e2e": "detox test --configuration android.emu.debug"
   },
   "dependencies": {
+    "@op-engineering/op-sqlite": "6.0.1",
     "@aws-sdk/client-s3": "^3.583.0",
     "@aws-sdk/credential-provider-env": "^3.583.0",
     "@aws-sdk/lib-storage": "^3.583.0",
@@ -19,7 +20,7 @@
     "react": "18.2.0",
     "react-native": "0.73.6",
     "react-native-haptic-feedback": "^2.2.0",
-    "react-native-quick-sqlite": "8.1.0",
+    "react-native-mmkv": "2.12.2",
     "react-native-vision-camera": "^3.9.2",
     "react-native-worklets-core": "^0.4.0"
   },
@@ -44,5 +45,8 @@
   },
   "engines": {
     "node": ">=18"
+  },
+  "op-sqlite": {
+    "sqlcipher": true
   }
 }
