@@ -9,6 +9,9 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
+import {startConnectivityWatcher} from './sync/connectivity/ConnectivityWatcher';
+
+import {CameraView} from './components/camera/CameraView';
 
 import {
   runMMKVSmokeTest,
@@ -64,6 +67,15 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#1f2937',
   },
+  cameraSection: {
+    marginBottom: 16,
+  },
+  cameraLabel: {
+    color: '#e2e8f0',
+    fontSize: 14,
+    fontWeight: '700',
+    marginBottom: 8,
+  },
   label: {fontSize: 13, color: '#94a3b8', marginBottom: 6},
   value: {fontSize: 16, color: '#f8fafc', fontWeight: '600'},
   button: {
@@ -102,7 +114,7 @@ const nativeBridge = NativeModules.NativeBridge as
   | undefined;
 
 function readGlobalEngine(): OfflineFaceAuthGlobal | undefined {
-  return global.__offlineFaceAuth;
+  return globalThis.__offlineFaceAuth;
 }
 
 function formatResult(result: OfflineFaceAuthResult): string {
@@ -161,9 +173,15 @@ export default function App(): React.JSX.Element {
   const [enginePresent, setEnginePresent] = useState<boolean>(false);
   const [initialized, setInitialized] = useState<boolean>(false);
   const [storageTestRunning, setStorageTestRunning] = useState<boolean>(false);
-  const [consoleOutput, setConsoleOutput] = useState<string>(
-    'Booting verification harness...',
-  );
+  const [previewReady, setPreviewReady] = useState<boolean>(false);
+  const [consoleOutput, setConsoleOutput] = useState<string>('Booting verification harness...');
+
+  useEffect(() => {
+    const unsubscribe = startConnectivityWatcher();
+    return () => {
+      unsubscribe();
+    };
+  }, []);
 
   const refreshStatus = useCallback(() => {
     const engine = readGlobalEngine();
@@ -273,17 +291,18 @@ export default function App(): React.JSX.Element {
   const summary = useMemo(
     () => [
       {label: 'Engine Presence', value: enginePresent ? 'Injected' : 'Missing'},
-      {
-        label: 'Initialization State',
-        value: initialized ? 'Initialized' : 'Not initialized',
-      },
-      {
-        label: 'Storage Smoke Test',
-        value: storageTestRunning ? 'Running' : 'Ready',
-      },
-      {label: 'Model Path', value: MODEL_PATH},
-    ],
-    [enginePresent, initialized, storageTestRunning],
+      {label: 'Camera Preview', value: previewReady ? 'Rendering' : 'Waiting'},
+        {
+          label: 'Initialization State',
+          value: initialized ? 'Initialized' : 'Not initialized',
+        },
+        {
+          label: 'Storage Smoke Test',
+          value: storageTestRunning ? 'Running' : 'Ready',
+        },
+        { label: 'Model Path', value: MODEL_PATH },
+      ],
+      [enginePresent, previewReady, initialized, storageTestRunning],
   );
 
   return (
@@ -297,6 +316,14 @@ export default function App(): React.JSX.Element {
         <Text style={styles.subheader}>
           Verifies JNI bootstrap, JSI injection, and zero-copy embedding access.
         </Text>
+
+        <View style={styles.cameraSection}>
+          <Text style={styles.cameraLabel}>Front Camera Preview</Text>
+          <CameraView
+            ringState={previewReady ? 'detected' : 'idle'}
+            onPreviewReady={() => setPreviewReady(true)}
+          />
+        </View>
 
         {summary.map((item) => (
           <View key={item.label} style={styles.card}>
