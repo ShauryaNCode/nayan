@@ -130,6 +130,24 @@ offlineface::frameprocessor::ProcessedFrameResult SnapshotLatestResult() {
   return gFrameProcessorPlugin->DrainLatestResult();
 }
 
+offlineface::frameprocessor::NativeLivenessState DecodeLivenessState(
+    jint state) {
+  using offlineface::frameprocessor::NativeLivenessState;
+  switch (state) {
+    case 1:
+      return NativeLivenessState::kDetected;
+    case 2:
+      return NativeLivenessState::kChallengeActive;
+    case 3:
+      return NativeLivenessState::kLivenessPass;
+    case 4:
+      return NativeLivenessState::kLivenessFail;
+    case 0:
+    default:
+      return NativeLivenessState::kIdle;
+  }
+}
+
 jsi::Function CreateLatestResultFunction(jsi::Runtime& runtime) {
   return jsi::Function::createFromHostFunction(
       runtime,
@@ -162,6 +180,27 @@ jsi::Function CreateInitializedFunction(jsi::Runtime& runtime) {
       });
 }
 
+jsi::Function CreateSetLivenessStateFunction(jsi::Runtime& runtime) {
+  return jsi::Function::createFromHostFunction(
+      runtime,
+      jsi::PropNameID::forAscii(runtime, "setLivenessState"),
+      1,
+      [](jsi::Runtime&,
+         const jsi::Value&,
+         const jsi::Value* args,
+         size_t count) -> jsi::Value {
+        if (count < 1 || !args[0].isNumber()) {
+          return jsi::Value(false);
+        }
+
+        const auto pipeline = offlineface::jni::GetInitializedPipeline();
+        pipeline->SetLivenessState(
+            offlineface::jni::DecodeLivenessState(
+                static_cast<jint>(args[0].asNumber())));
+        return jsi::Value(true);
+      });
+}
+
 void InstallJsiBindings(jsi::Runtime& runtime) {
   const jsi::Value existing =
       runtime.global().getProperty(runtime, kGlobalModuleName);
@@ -175,6 +214,8 @@ void InstallJsiBindings(jsi::Runtime& runtime) {
       runtime, "getLatestResult", CreateLatestResultFunction(runtime));
   module.setProperty(
       runtime, "isInitialized", CreateInitializedFunction(runtime));
+  module.setProperty(
+      runtime, "setLivenessState", CreateSetLivenessStateFunction(runtime));
   module.setProperty(
       runtime,
       "frameProcessorRegistryReady",
@@ -398,4 +439,24 @@ Java_com_offlinefaceauth_NativeBridge_nativeEnqueueFrame(JNIEnv* env,
         "nativeEnqueueFrame failed with an unknown native exception");
   }
   return JNI_FALSE;
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_com_offlinefaceauth_NativeBridge_nativeSetLivenessState(JNIEnv* env,
+                                                             jclass,
+                                                             jint state) {
+  try {
+    const auto pipeline = offlineface::jni::GetInitializedPipeline();
+    pipeline->SetLivenessState(offlineface::jni::DecodeLivenessState(state));
+    return;
+  } catch (const std::exception& exception) {
+    offlineface::jni::ThrowJavaException(
+        env, offlineface::jni::kJavaRuntimeException, exception.what());
+  } catch (...) {
+    offlineface::jni::ThrowJavaException(
+        env,
+        offlineface::jni::kJavaRuntimeException,
+        "nativeSetLivenessState failed with an unknown native exception");
+  }
+  return;
 }

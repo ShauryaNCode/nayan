@@ -48,6 +48,28 @@ jsi::Value JSIHostObject::get(jsi::Runtime& rt, const jsi::PropNameID& name) {
   if (propertyName == "sharpnessScore") {
     return jsi::Value(static_cast<double>(result_->sharpnessScore));
   }
+  if (propertyName == "faceMeshProcessed") {
+    return jsi::Value(result_->faceMeshProcessed);
+  }
+  if (propertyName == "mobileFaceNetProcessed") {
+    return jsi::Value(result_->mobileFaceNetProcessed);
+  }
+  if (propertyName == "droppedFrameCount") {
+    return jsi::Value(static_cast<double>(result_->droppedFrameCount));
+  }
+  if (propertyName == "replacedFrameCount") {
+    return jsi::Value(static_cast<double>(result_->replacedFrameCount));
+  }
+  if (propertyName == "faceMeshThreadCount") {
+    return jsi::Value(static_cast<double>(result_->faceMeshThreadCount));
+  }
+  if (propertyName == "mobileFaceNetThreadCount") {
+    return jsi::Value(static_cast<double>(result_->mobileFaceNetThreadCount));
+  }
+  if (propertyName == "livenessState") {
+    return jsi::Value(
+        static_cast<double>(static_cast<int>(result_->livenessState)));
+  }
   if (propertyName == "embedding") {
     return jsi::Value(rt, CreateEmbeddingTypedArray(rt));
   }
@@ -63,10 +85,17 @@ jsi::Value JSIHostObject::get(jsi::Runtime& rt, const jsi::PropNameID& name) {
 
 std::vector<jsi::PropNameID> JSIHostObject::getPropertyNames(jsi::Runtime& rt) {
   std::vector<jsi::PropNameID> names;
-  names.reserve(6);
+  names.reserve(13);
   names.emplace_back(jsi::PropNameID::forAscii(rt, "accepted"));
   names.emplace_back(jsi::PropNameID::forAscii(rt, "timestampNs"));
   names.emplace_back(jsi::PropNameID::forAscii(rt, "sharpnessScore"));
+  names.emplace_back(jsi::PropNameID::forAscii(rt, "faceMeshProcessed"));
+  names.emplace_back(jsi::PropNameID::forAscii(rt, "mobileFaceNetProcessed"));
+  names.emplace_back(jsi::PropNameID::forAscii(rt, "droppedFrameCount"));
+  names.emplace_back(jsi::PropNameID::forAscii(rt, "replacedFrameCount"));
+  names.emplace_back(jsi::PropNameID::forAscii(rt, "faceMeshThreadCount"));
+  names.emplace_back(jsi::PropNameID::forAscii(rt, "mobileFaceNetThreadCount"));
+  names.emplace_back(jsi::PropNameID::forAscii(rt, "livenessState"));
   names.emplace_back(jsi::PropNameID::forAscii(rt, "embedding"));
   names.emplace_back(jsi::PropNameID::forAscii(rt, "embeddingLength"));
   names.emplace_back(jsi::PropNameID::forAscii(rt, "embeddingByteLength"));

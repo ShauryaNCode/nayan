@@ -43,3 +43,47 @@ yarn-error.log*
 .idea/workspace.xml
 .idea/deviceManager.xml
 .vscode/.react/
+.eslintcache
+
+# OS files
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*~
+
+# Build and dist
+dist/
+build/
+coverage/
+.turbo/
+
+# Yarn/npm alternative package managers
+.pnp
+.pnp.js
+.yarn/
+.yarn/*
+!.yarn/patches
+!.yarn/plugins
+!.yarn/releases
+!.yarn/sdks
+!.yarn/versions
+
+# Java/Android gradle caches
+.gradle/
+*.gradle.kts
+!gradle/wrapper/gradle-wrapper.jar
+
+# IDE and editor caches
+*.iml
+*.sublime-project
+*.sublime-workspace
+.history/
+
+# Dependencies lock files local overrides
+package-lock.json.local
+yarn.lock.local
+
+# Development
+.env.local
+.env.*.local
