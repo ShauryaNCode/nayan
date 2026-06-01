@@ -7,20 +7,36 @@ import com.facebook.react.ReactApplication;
 import com.facebook.react.ReactInstanceEventListener;
 import com.facebook.react.ReactInstanceManager;
 import com.facebook.react.bridge.Promise;
+import com.facebook.react.bridge.Arguments;
 import com.facebook.react.bridge.ReactApplicationContext;
 import com.facebook.react.bridge.ReactContextBaseJavaModule;
 import com.facebook.react.bridge.ReactMethod;
+import com.facebook.react.bridge.WritableMap;
 import com.facebook.react.module.annotations.ReactModule;
 
+import com.offlinefaceauth.keystore.KeystoreManager;
+
 import android.os.Build;
+import android.util.Base64;
 
 import java.nio.ByteBuffer;
+import java.security.GeneralSecurityException;
+import java.security.SecureRandom;
+import java.util.Arrays;
 import java.util.concurrent.atomic.AtomicBoolean;
+
+import javax.crypto.Cipher;
+import javax.crypto.SecretKey;
+import javax.crypto.spec.GCMParameterSpec;
 
 @ReactModule(name = NativeBridge.NAME)
 public final class NativeBridge extends ReactContextBaseJavaModule {
   public static final String NAME = "NativeBridge";
   private static final String DEFAULT_MODEL_PATH = "/sdcard/Download/mobilefacenet.tflite";
+  private static final String AES_GCM_TRANSFORMATION = "AES/GCM/NoPadding";
+  private static final int DEK_BYTES = 32;
+  private static final int GCM_IV_BYTES = 12;
+  private static final int GCM_TAG_BITS = 128;
   private static final AtomicBoolean IS_JSI_INSTALLED = new AtomicBoolean(false);
 
   static {
@@ -119,6 +135,136 @@ public final class NativeBridge extends ReactContextBaseJavaModule {
     }
   }
 
+  @ReactMethod
+  public void generateSecureRandomBase64(double byteLength, Promise promise) {
+    try {
+      final int length = (int) byteLength;
+      if (length <= 0 || length > 1024) {
+        throw new IllegalArgumentException("byteLength must be between 1 and 1024");
+      }
+
+      final byte[] randomBytes = new byte[length];
+      new SecureRandom().nextBytes(randomBytes);
+      promise.resolve(Base64.encodeToString(randomBytes, Base64.NO_WRAP));
+    } catch (Throwable throwable) {
+      promise.reject("E_SECURE_RANDOM", throwable);
+    }
+  }
+
+  @ReactMethod
+  public void deriveDatabasePassphrase(String nonceBase64, Promise promise) {
+    try {
+      if (nonceBase64 == null || nonceBase64.trim().isEmpty()) {
+        throw new IllegalArgumentException("nonceBase64 must not be empty");
+      }
+
+      final byte[] nonce = Base64.decode(nonceBase64, Base64.NO_WRAP);
+      final SecretKey key = KeystoreManager.getOrCreateAesGcmKey();
+      final Cipher cipher = Cipher.getInstance(AES_GCM_TRANSFORMATION);
+      cipher.init(Cipher.ENCRYPT_MODE, key);
+
+      final byte[] iv = cipher.getIV();
+      final byte[] ciphertextAndTag = cipher.doFinal(nonce);
+      final ByteBuffer envelope =
+          ByteBuffer.allocate(1 + iv.length + ciphertextAndTag.length);
+      envelope.put((byte) iv.length);
+      envelope.put(iv);
+      envelope.put(ciphertextAndTag);
+
+      final KeystoreManager.KeyHardwareInfo hardwareInfo =
+          KeystoreManager.getHardwareInfo(key);
+
+      final WritableMap result = Arguments.createMap();
+      result.putString(
+          "passphrase", Base64.encodeToString(envelope.array(), Base64.NO_WRAP));
+      result.putString("keyAlias", KeystoreManager.KEY_ALIAS);
+      result.putString("provider", resolveKeyProvider(hardwareInfo));
+      result.putInt("envelopeVersion", 1);
+      promise.resolve(result);
+    } catch (Throwable throwable) {
+      promise.reject("E_DB_PASSPHRASE", throwable);
+    }
+  }
+
+  @ReactMethod
+  public void generatePersonKey(String personnelId, Promise promise) {
+    try {
+      KeystoreManager.generatePersonAesGcmKey(personnelId);
+      promise.resolve(null);
+    } catch (Throwable throwable) {
+      promise.reject("E_PERSON_KEY_GENERATE", throwable);
+    }
+  }
+
+  @ReactMethod
+  public void deletePersonKey(String personnelId, Promise promise) {
+    try {
+      promise.resolve(KeystoreManager.deletePersonAesGcmKey(personnelId));
+    } catch (Throwable throwable) {
+      promise.reject("E_PERSON_KEY_DELETE", throwable);
+    }
+  }
+
+  @ReactMethod
+  public void wrapDEK(String personnelId, String dekHex, Promise promise) {
+    byte[] dek = null;
+
+    try {
+      dek = CryptoUtils.hexToBytes(dekHex, DEK_BYTES);
+      final SecretKey key = KeystoreManager.getPersonAesGcmKey(personnelId);
+      final Cipher cipher = Cipher.getInstance(AES_GCM_TRANSFORMATION);
+      final byte[] iv = new byte[GCM_IV_BYTES];
+      new SecureRandom().nextBytes(iv);
+
+      cipher.init(
+          Cipher.ENCRYPT_MODE,
+          key,
+          new GCMParameterSpec(GCM_TAG_BITS, iv));
+
+      final byte[] ciphertextAndTag = cipher.doFinal(dek);
+      final byte[] wrapped = CryptoUtils.concat(iv, ciphertextAndTag);
+      promise.resolve(Base64.encodeToString(wrapped, Base64.NO_WRAP));
+    } catch (Throwable throwable) {
+      promise.reject("E_PERSON_DEK_WRAP", throwable);
+    } finally {
+      CryptoUtils.wipe(dek);
+    }
+  }
+
+  @ReactMethod
+  public void unwrapDEK(String personnelId, String wrappedDEKBase64, Promise promise) {
+    byte[] plaintext = null;
+
+    try {
+      final byte[] wrapped = Base64.decode(wrappedDEKBase64, Base64.NO_WRAP);
+      if (wrapped.length <= GCM_IV_BYTES) {
+        throw new GeneralSecurityException("wrapped DEK is too short");
+      }
+
+      final byte[] iv = Arrays.copyOfRange(wrapped, 0, GCM_IV_BYTES);
+      final byte[] ciphertextAndTag =
+          Arrays.copyOfRange(wrapped, GCM_IV_BYTES, wrapped.length);
+      final SecretKey key = KeystoreManager.getPersonAesGcmKey(personnelId);
+      final Cipher cipher = Cipher.getInstance(AES_GCM_TRANSFORMATION);
+
+      cipher.init(
+          Cipher.DECRYPT_MODE,
+          key,
+          new GCMParameterSpec(GCM_TAG_BITS, iv));
+
+      plaintext = cipher.doFinal(ciphertextAndTag);
+      if (plaintext.length != DEK_BYTES) {
+        throw new GeneralSecurityException("unwrapped DEK is not 32 bytes");
+      }
+
+      promise.resolve(CryptoUtils.bytesToHex(plaintext));
+    } catch (Throwable throwable) {
+      promise.reject("E_PERSON_DEK_UNWRAP", throwable);
+    } finally {
+      CryptoUtils.wipe(plaintext);
+    }
+  }
+
   private void installJSIWhenReady() {
     if (IS_JSI_INSTALLED.get()) {
       return;
@@ -166,6 +312,16 @@ public final class NativeBridge extends ReactContextBaseJavaModule {
       }
     }
     return false;
+  }
+
+  private static String resolveKeyProvider(KeystoreManager.KeyHardwareInfo hardwareInfo) {
+    if (hardwareInfo.strongBoxBacked) {
+      return "android_keystore_strongbox";
+    }
+    if (hardwareInfo.insideSecureHardware) {
+      return "android_keystore_tee";
+    }
+    return "android_keystore_software";
   }
 
   private static int resolveLivenessState(String state) {

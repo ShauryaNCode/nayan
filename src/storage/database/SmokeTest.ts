@@ -15,11 +15,13 @@
 import {
   isSQLCipher,
   open,
-  type OPSQLiteConnection as DB,
+  type DB,
 } from '@op-engineering/op-sqlite';
 import {MMKV} from 'react-native-mmkv';
 
-import {configurePhase0Pragmas} from './DatabaseManager';
+import {deriveSQLCipherPassphrase} from '../encryption/KeyDerivation';
+import {configureDatabasePragmas} from './DatabaseManager';
+import {runMigrations} from './migrations/MigrationRunner';
 
 export interface SmokeTestStep {
   name: string;
@@ -33,8 +35,7 @@ export interface SmokeTestResult {
   durationMs: number;
 }
 
-const TEST_DB_NAME = 'nayan_smoke_test.db';
-const TEST_ENCRYPTION_KEY = 'phase0-smoke-test-key-do-not-use-in-prod';
+const TEST_DB_NAME = 'nayan_t3_1_smoke_test.db';
 const TEST_MMKV_ID = 'nayan.phase0.mmkv.smoke';
 
 function getFirstRow(rows: unknown): any | undefined {
@@ -92,11 +93,33 @@ export async function runSQLCipherSmokeTest(): Promise<SmokeTestResult> {
       return buildResult(steps, startTime);
     }
 
-    // Step 2: Open encrypted database.
+    // Step 2: Derive hardware-backed SQLCipher passphrase.
+    let encryptionKey = '';
+    try {
+      const passphraseResult = await deriveSQLCipherPassphrase();
+      encryptionKey = passphraseResult.passphrase;
+      steps.push({
+        name: 'Derive SQLCipher passphrase',
+        passed: true,
+        detail:
+          `provider=${passphraseResult.provider}; ` +
+          `alias=${passphraseResult.keyAlias}; ` +
+          `cached=${String(passphraseResult.restoredFromCache)}`,
+      });
+    } catch (error) {
+      steps.push({
+        name: 'Derive SQLCipher passphrase',
+        passed: false,
+        detail: `Failed: ${String(error)}`,
+      });
+      return buildResult(steps, startTime);
+    }
+
+    // Step 3: Open encrypted database.
     try {
       db = open({
         name: TEST_DB_NAME,
-        encryptionKey: TEST_ENCRYPTION_KEY,
+        encryptionKey,
       });
       steps.push({
         name: 'Open encrypted DB',
@@ -112,7 +135,7 @@ export async function runSQLCipherSmokeTest(): Promise<SmokeTestResult> {
       return buildResult(steps, startTime);
     }
 
-    // Step 3: Verify SQLCipher is active (not plain SQLite).
+    // Step 4: Verify SQLCipher is active (not plain SQLite).
     try {
       const cipherResult = await db.execute('PRAGMA cipher_version;');
       const cipherRow = getFirstRow(cipherResult.rows);
@@ -138,9 +161,9 @@ export async function runSQLCipherSmokeTest(): Promise<SmokeTestResult> {
       return buildResult(steps, startTime);
     }
 
-    // Step 4: Initialize PRAGMAs before schema migration or app statements.
+    // Step 5: Initialize PRAGMAs before schema migration or app statements.
     try {
-      const pragmaState = configurePhase0Pragmas(db);
+      const pragmaState = configureDatabasePragmas(db);
       const walEnabled = pragmaState.journalMode === 'wal';
       const synchronousNormal = pragmaState.synchronous === 1;
       const autocheckpointEnabled = pragmaState.walAutocheckpoint === 100;
@@ -180,32 +203,24 @@ export async function runSQLCipherSmokeTest(): Promise<SmokeTestResult> {
       return buildResult(steps, startTime);
     }
 
-    // Step 5: Create test table.
+    // Step 6: Run production migrations.
     try {
-      await db.execute(`
-        CREATE TABLE IF NOT EXISTS smoke_test (
-          id INTEGER PRIMARY KEY AUTOINCREMENT,
-          personnel_id TEXT NOT NULL,
-          full_name TEXT NOT NULL,
-          enrolled_at TEXT NOT NULL
-        );
-      `);
+      const migrationResult = runMigrations(db);
       steps.push({
-        name: 'Create table',
+        name: 'Run schema migrations',
         passed: true,
-        detail:
-          'Table "smoke_test" created (id, personnel_id, full_name, enrolled_at)',
+        detail: `Latest migration version: ${migrationResult.latestVersion}`,
       });
     } catch (error) {
       steps.push({
-        name: 'Create table',
+        name: 'Run schema migrations',
         passed: false,
         detail: `Failed: ${String(error)}`,
       });
       return buildResult(steps, startTime);
     }
 
-    // Step 6: Insert a test row.
+    // Step 7: Insert a migrated-schema ledger row.
     const testData = {
       personnel_id: 'NAYAN-P0-001',
       full_name: 'Phase Zero Test User',
@@ -213,29 +228,81 @@ export async function runSQLCipherSmokeTest(): Promise<SmokeTestResult> {
     };
 
     try {
-      await db.execute(
-        'INSERT INTO smoke_test (personnel_id, full_name, enrolled_at) VALUES (?, ?, ?);',
-        [testData.personnel_id, testData.full_name, testData.enrolled_at],
-      );
+      await db.transaction(async (tx) => {
+        await tx.execute(
+          `
+            INSERT OR REPLACE INTO personnel (
+              personnel_id,
+              full_name,
+              enrollment_status,
+              created_at,
+              updated_at
+            ) VALUES (?, ?, 'active', ?, ?);
+          `,
+          [
+            testData.personnel_id,
+            testData.full_name,
+            testData.enrolled_at,
+            testData.enrolled_at,
+          ],
+        );
+        await tx.execute(
+          `
+            INSERT OR REPLACE INTO attendance_ledger (
+              ledger_id,
+              personnel_id,
+              event_type,
+              captured_at,
+              device_id,
+              confidence,
+              liveness_score,
+              payload_json,
+              previous_hash,
+              current_hash,
+              chain_index,
+              synced,
+              created_at
+            ) VALUES (?, ?, 'verification', ?, ?, ?, ?, ?, ?, ?, ?, 0, ?);
+          `,
+          [
+            'NAYAN-SMOKE-LEDGER-001',
+            testData.personnel_id,
+            testData.enrolled_at,
+            'smoke-test-device',
+            0.99,
+            1,
+            '{"source":"t3.1-smoke-test"}',
+            'GENESIS',
+            'SMOKE_TEST_HASH',
+            1,
+            testData.enrolled_at,
+          ],
+        );
+      });
       steps.push({
-        name: 'Insert row',
+        name: 'Insert ledger row',
         passed: true,
-        detail: `Inserted: ${testData.personnel_id} / "${testData.full_name}"`,
+        detail: `Inserted unsynced ledger row for ${testData.personnel_id}`,
       });
     } catch (error) {
       steps.push({
-        name: 'Insert row',
+        name: 'Insert ledger row',
         passed: false,
         detail: `Failed: ${String(error)}`,
       });
       return buildResult(steps, startTime);
     }
 
-    // Step 7: Read it back and assert equality.
+    // Step 8: Read it back through M4's synced=0 access path.
     try {
       const selectResult = await db.execute(
-        'SELECT personnel_id, full_name, enrolled_at FROM smoke_test WHERE personnel_id = ?;',
-        [testData.personnel_id],
+        `
+          SELECT ledger_id, personnel_id, synced
+          FROM attendance_ledger
+          WHERE synced = 0
+          ORDER BY chain_index ASC
+          LIMIT 1;
+        `,
       );
 
       const row = getFirstRow(selectResult.rows);
@@ -249,21 +316,21 @@ export async function runSQLCipherSmokeTest(): Promise<SmokeTestResult> {
       }
 
       // Handle both object-style and array-style row access.
-      const readPersonnelId = row.personnel_id ?? row[0];
-      const readFullName = row.full_name ?? row[1];
-      const readEnrolledAt = row.enrolled_at ?? row[2];
+      const readLedgerId = row.ledger_id ?? row[0];
+      const readPersonnelId = row.personnel_id ?? row[1];
+      const readSynced = Number(row.synced ?? row[2]);
 
-      const idMatch = readPersonnelId === testData.personnel_id;
-      const nameMatch = readFullName === testData.full_name;
-      const dateMatch = readEnrolledAt === testData.enrolled_at;
-      const allMatch = idMatch && nameMatch && dateMatch;
+      const allMatch =
+        readLedgerId === 'NAYAN-SMOKE-LEDGER-001' &&
+        readPersonnelId === testData.personnel_id &&
+        readSynced === 0;
 
       steps.push({
         name: 'Read back & assert',
         passed: allMatch,
         detail: allMatch
-          ? `All 3 fields match: id=${readPersonnelId}`
-          : `Mismatch! id:${idMatch} name:${nameMatch} date:${dateMatch}`,
+          ? `M4 synced=0 query returned ledger_id=${readLedgerId}`
+          : `Mismatch! ledger_id:${readLedgerId} personnel:${readPersonnelId} synced:${readSynced}`,
       });
 
       if (!allMatch) {
@@ -278,23 +345,28 @@ export async function runSQLCipherSmokeTest(): Promise<SmokeTestResult> {
       return buildResult(steps, startTime);
     }
 
-    // Step 8: Drop test table.
+    // Step 9: Cleanup test rows.
     try {
-      await db.execute('DROP TABLE IF EXISTS smoke_test;');
+      await db.execute('DELETE FROM attendance_ledger WHERE ledger_id = ?;', [
+        'NAYAN-SMOKE-LEDGER-001',
+      ]);
+      await db.execute('DELETE FROM personnel WHERE personnel_id = ?;', [
+        testData.personnel_id,
+      ]);
       steps.push({
-        name: 'Drop table',
+        name: 'Cleanup rows',
         passed: true,
-        detail: 'Table "smoke_test" dropped; clean teardown',
+        detail: 'Smoke-test personnel and ledger rows deleted',
       });
     } catch (error) {
       steps.push({
-        name: 'Drop table',
+        name: 'Cleanup rows',
         passed: false,
         detail: `Failed: ${String(error)}`,
       });
     }
 
-    // Step 9: Close database.
+    // Step 10: Close database.
     try {
       db.close();
       db = null;
