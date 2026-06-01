@@ -147,7 +147,23 @@ offlineface::frameprocessor::NativeLivenessState DecodeLivenessState(
       return NativeLivenessState::kIdle;
   }
 }
-
+offlineface::frameprocessor::NativeLivenessChallenge DecodeLivenessChallenge(
+    jint challenge) {
+  using offlineface::frameprocessor::NativeLivenessChallenge;
+  switch (challenge) {
+    case 1:
+      return NativeLivenessChallenge::kBlink;
+    case 2:
+      return NativeLivenessChallenge::kSmile;
+    case 3:
+      return NativeLivenessChallenge::kTurnLeft;
+    case 4:
+      return NativeLivenessChallenge::kTurnRight;
+    case 0:
+    default:
+      return NativeLivenessChallenge::kNone;
+  }
+}
 jsi::Function CreateLatestResultFunction(jsi::Runtime& runtime) {
   return jsi::Function::createFromHostFunction(
       runtime,
@@ -200,7 +216,26 @@ jsi::Function CreateSetLivenessStateFunction(jsi::Runtime& runtime) {
         return jsi::Value(true);
       });
 }
+jsi::Function CreateSetLivenessChallengeFunction(jsi::Runtime& runtime) {
+  return jsi::Function::createFromHostFunction(
+      runtime,
+      jsi::PropNameID::forAscii(runtime, "setLivenessChallenge"),
+      1,
+      [](jsi::Runtime&,
+         const jsi::Value&,
+         const jsi::Value* args,
+         size_t count) -> jsi::Value {
+        if (count < 1 || !args[0].isNumber()) {
+          return jsi::Value(false);
+        }
 
+        const auto pipeline = offlineface::jni::GetInitializedPipeline();
+        pipeline->SetLivenessChallenge(
+            offlineface::jni::DecodeLivenessChallenge(
+                static_cast<jint>(args[0].asNumber())));
+        return jsi::Value(true);
+      });
+}
 void InstallJsiBindings(jsi::Runtime& runtime) {
   const jsi::Value existing =
       runtime.global().getProperty(runtime, kGlobalModuleName);
@@ -216,6 +251,10 @@ void InstallJsiBindings(jsi::Runtime& runtime) {
       runtime, "isInitialized", CreateInitializedFunction(runtime));
   module.setProperty(
       runtime, "setLivenessState", CreateSetLivenessStateFunction(runtime));
+  module.setProperty(
+      runtime,
+      "setLivenessChallenge",
+      CreateSetLivenessChallengeFunction(runtime));
   module.setProperty(
       runtime,
       "frameProcessorRegistryReady",
@@ -322,19 +361,26 @@ extern "C" JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM* vm, void*) {
 extern "C" JNIEXPORT void JNICALL
 Java_com_offlinefaceauth_NativeBridge_nativeInitialize(JNIEnv* env,
                                                        jclass,
-                                                       jstring modelPath) {
+                                                       jstring mobileFaceNetModelPath,
+                                                       jstring faceMeshModelPath) {
   try {
-    if (modelPath == nullptr) {
-      throw std::invalid_argument("modelPath must not be null");
+    if (mobileFaceNetModelPath == nullptr) {
+      throw std::invalid_argument("mobileFaceNetModelPath must not be null");
+    }
+    if (faceMeshModelPath == nullptr) {
+      throw std::invalid_argument("faceMeshModelPath must not be null");
     }
 
-    offlineface::jni::ScopedUtfChars utfChars(env, modelPath);
-    if (!utfChars.valid()) {
+    offlineface::jni::ScopedUtfChars mobileUtfChars(
+        env, mobileFaceNetModelPath);
+    offlineface::jni::ScopedUtfChars faceMeshUtfChars(env, faceMeshModelPath);
+    if (!mobileUtfChars.valid() || !faceMeshUtfChars.valid()) {
       throw std::runtime_error("GetStringUTFChars returned null");
     }
 
     offlineface::inference::TFLiteInterpreterManager::Instance().Initialize(
-        std::string(utfChars.c_str()));
+        std::string(mobileUtfChars.c_str()),
+        std::string(faceMeshUtfChars.c_str()));
     offlineface::jni::GetInitializedPipeline();
     return;
   } catch (const std::invalid_argument& exception) {
@@ -441,6 +487,71 @@ Java_com_offlinefaceauth_NativeBridge_nativeEnqueueFrame(JNIEnv* env,
   return JNI_FALSE;
 }
 
+extern "C" JNIEXPORT jboolean JNICALL
+Java_com_offlinefaceauth_NativeBridge_nativeSubmitModelResult(
+    JNIEnv* env,
+    jclass,
+    jfloatArray landmarkValues,
+    jfloatArray embeddingValues,
+    jint width,
+    jint height,
+    jlong timestampNs) {
+  try {
+    if (landmarkValues == nullptr) {
+      throw std::invalid_argument("landmarkValues must not be null");
+    }
+    if (width <= 0 || height <= 0) {
+      throw std::invalid_argument("Invalid frame dimensions");
+    }
+
+    const jsize landmarkCount = env->GetArrayLength(landmarkValues);
+    if (landmarkCount < static_cast<jsize>(468 * 3)) {
+      throw std::invalid_argument("landmarkValues must contain 468x3 floats");
+    }
+
+    jfloat* landmarks =
+        env->GetFloatArrayElements(landmarkValues, nullptr);
+    if (landmarks == nullptr) {
+      throw std::runtime_error("GetFloatArrayElements failed for landmarks");
+    }
+
+    jfloat* embeddings = nullptr;
+    jsize embeddingCount = 0;
+    if (embeddingValues != nullptr) {
+      embeddingCount = env->GetArrayLength(embeddingValues);
+      embeddings = env->GetFloatArrayElements(embeddingValues, nullptr);
+    }
+
+    const auto pipeline = offlineface::jni::GetInitializedPipeline();
+    const bool accepted = pipeline->SubmitExternalModelResult(
+        landmarks,
+        static_cast<std::size_t>(landmarkCount),
+        embeddings,
+        static_cast<std::size_t>(embeddingCount),
+        static_cast<uint32_t>(width),
+        static_cast<uint32_t>(height),
+        static_cast<uint64_t>(timestampNs));
+
+    env->ReleaseFloatArrayElements(landmarkValues, landmarks, JNI_ABORT);
+    if (embeddingValues != nullptr && embeddings != nullptr) {
+      env->ReleaseFloatArrayElements(embeddingValues, embeddings, JNI_ABORT);
+    }
+    return accepted ? JNI_TRUE : JNI_FALSE;
+  } catch (const std::invalid_argument& exception) {
+    offlineface::jni::ThrowJavaException(
+        env, offlineface::jni::kJavaIllegalArgumentException, exception.what());
+  } catch (const std::exception& exception) {
+    offlineface::jni::ThrowJavaException(
+        env, offlineface::jni::kJavaRuntimeException, exception.what());
+  } catch (...) {
+    offlineface::jni::ThrowJavaException(
+        env,
+        offlineface::jni::kJavaRuntimeException,
+        "nativeSubmitModelResult failed with an unknown native exception");
+  }
+  return JNI_FALSE;
+}
+
 extern "C" JNIEXPORT void JNICALL
 Java_com_offlinefaceauth_NativeBridge_nativeSetLivenessState(JNIEnv* env,
                                                              jclass,
@@ -460,3 +571,26 @@ Java_com_offlinefaceauth_NativeBridge_nativeSetLivenessState(JNIEnv* env,
   }
   return;
 }
+
+extern "C" JNIEXPORT void JNICALL
+Java_com_offlinefaceauth_NativeBridge_nativeSetLivenessChallenge(JNIEnv* env,
+                                                                 jclass,
+                                                                 jint challenge) {
+  try {
+    const auto pipeline = offlineface::jni::GetInitializedPipeline();
+    pipeline->SetLivenessChallenge(
+        offlineface::jni::DecodeLivenessChallenge(challenge));
+    return;
+  } catch (const std::exception& exception) {
+    offlineface::jni::ThrowJavaException(
+        env, offlineface::jni::kJavaRuntimeException, exception.what());
+  } catch (...) {
+    offlineface::jni::ThrowJavaException(
+        env,
+        offlineface::jni::kJavaRuntimeException,
+        "nativeSetLivenessChallenge failed with an unknown native exception");
+  }
+  return;
+}
+
+

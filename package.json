@@ -8,6 +8,7 @@
     "lint": "eslint .",
     "start": "react-native start",
     "test": "jest",
+    "verify:models": "node scripts/verify-model-bundle.js",
     "test:e2e": "detox test --configuration android.emu.debug"
   },
   "dependencies": {

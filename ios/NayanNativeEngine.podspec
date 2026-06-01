@@ -34,7 +34,14 @@ Pod::Spec.new do |s|
     '../cpp/frame-processor/JSIHostObject.cpp',
     '../cpp/frame-processor/PixelBufferPool.cpp',
     '../cpp/inference/EmbeddingAverager.cpp',
-    '../cpp/inference/TFLiteInterpreterManager.cpp'
+    '../cpp/inference/MobileFaceNetRunner.cpp',
+    '../cpp/inference/TFLiteInterpreterManager.cpp',
+    '../cpp/landmarks/EARCalculator.cpp',
+    '../cpp/landmarks/FaceMeshEngine.cpp',
+    '../cpp/landmarks/FaceMeshRunner.cpp',
+    '../cpp/landmarks/HeadPoseEstimator.cpp',
+    '../cpp/landmarks/LivenessFSM.cpp',
+    '../cpp/landmarks/MARCalculator.cpp'
   ]
 
   s.dependency 'React-Core'

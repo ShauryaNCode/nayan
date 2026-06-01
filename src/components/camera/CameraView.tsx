@@ -5,8 +5,10 @@ import {
   useCameraDevice,
   useCameraFormat,
   useCameraPermission,
+  useFrameProcessor,
 } from 'react-native-vision-camera';
 
+import {getNativeFrameProcessorPlugin} from './FrameProcessorBridge';
 import {LivenessRing, LivenessRingState} from '../overlay/LivenessRing';
 
 type CameraViewProps = {
@@ -26,6 +28,11 @@ export function CameraView({
     {fps: 30},
   ]);
   const {hasPermission, requestPermission} = useCameraPermission();
+  const nayanFrameProcessorPlugin = getNativeFrameProcessorPlugin();
+  const frameProcessor = useFrameProcessor((frame) => {
+    'worklet';
+    nayanFrameProcessorPlugin?.call(frame);
+  }, [nayanFrameProcessorPlugin]);
 
   useEffect(() => {
     if (!hasPermission) {
@@ -58,6 +65,7 @@ export function CameraView({
         device={device}
         format={format}
         isActive={isActive && hasPermission}
+        frameProcessor={frameProcessor}
         onInitialized={onPreviewReady}
       />
       <LivenessRing state={ringState} />

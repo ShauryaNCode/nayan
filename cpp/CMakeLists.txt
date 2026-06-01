@@ -7,6 +7,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
 option(NAYAN_ENABLE_FRAME_PROCESSORS "Build the Nayan JSI/frame processor bridge" ON)
+option(NAYAN_BUILD_MOCK_LIVENESS_RUNNER "Build standalone liveness FSM mock runner" OFF)
 
 set(NAYAN_ENGINE_INCLUDE_DIRS
   ${CMAKE_CURRENT_SOURCE_DIR}
@@ -27,7 +28,14 @@ set(NAYAN_ENGINE_SOURCES
   ${CMAKE_CURRENT_SOURCE_DIR}/frame-processor/JSIHostObject.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/frame-processor/PixelBufferPool.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/inference/EmbeddingAverager.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/inference/MobileFaceNetRunner.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/inference/TFLiteInterpreterManager.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/landmarks/EARCalculator.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/landmarks/FaceMeshEngine.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/landmarks/FaceMeshRunner.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/landmarks/HeadPoseEstimator.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/landmarks/LivenessFSM.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/landmarks/MARCalculator.cpp
 )
 
 add_library(nayan_native_engine STATIC ${NAYAN_ENGINE_SOURCES})
@@ -90,5 +98,14 @@ else()
     -ffast-math
     -fstrict-aliasing
   )
+endif()
+
+if(NAYAN_BUILD_MOCK_LIVENESS_RUNNER)
+  add_executable(mock_liveness_runner
+    ${CMAKE_CURRENT_SOURCE_DIR}/landmarks/MockLivenessRunner.cpp
+  )
+
+  target_link_libraries(mock_liveness_runner PRIVATE nayan::native_engine)
+  target_include_directories(mock_liveness_runner PRIVATE ${NAYAN_ENGINE_INCLUDE_DIRS})
 endif()
 

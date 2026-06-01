@@ -14,15 +14,41 @@ TFLiteInterpreterManager& TFLiteInterpreterManager::Instance() {
 }
 
 void TFLiteInterpreterManager::Initialize(const std::string& modelPath) {
+  Initialize(modelPath, modelPath);
+}
+
+void TFLiteInterpreterManager::Initialize(
+    const std::string& mobileFaceNetModelPath,
+    const std::string& faceMeshModelPath) {
   std::lock_guard<std::mutex> lock(mutex_);
-  if (modelPath.empty()) {
-    throw std::invalid_argument("modelPath must not be empty");
+  if (mobileFaceNetModelPath.empty()) {
+    throw std::invalid_argument("mobileFaceNetModelPath must not be empty");
+  }
+  if (faceMeshModelPath.empty()) {
+    throw std::invalid_argument("faceMeshModelPath must not be empty");
   }
 
-  modelPath_ = modelPath;
+  modelPath_ = mobileFaceNetModelPath;
+  faceMeshModelPath_ = faceMeshModelPath;
   ConfigureThreadBudget();
   CreateDelegates();
+  faceMeshEngine_.LoadModel(faceMeshModelPath_);
+  mobileFaceNetRunner_.LoadModel(modelPath_);
   initialized_ = true;
+}
+
+bool TFLiteInterpreterManager::InitializeFaceMeshModel(
+    const std::string& modelPath) {
+  std::lock_guard<std::mutex> lock(mutex_);
+  if (modelPath.empty()) {
+    return false;
+  }
+
+  ConfigureThreadBudget();
+  CreateDelegates();
+  faceMeshModelPath_ = modelPath;
+  initialized_ = true;
+  return faceMeshEngine_.LoadModel(modelPath);
 }
 
 FaceMeshResult TFLiteInterpreterManager::RunFaceMesh(const uint8_t* grayPixels,
@@ -34,7 +60,34 @@ FaceMeshResult TFLiteInterpreterManager::RunFaceMesh(const uint8_t* grayPixels,
     return {};
   }
 
-  return RunMockFaceMesh(grayPixels, width, height, stride);
+  if (faceMeshEngine_.IsReady()) {
+    offlineface::landmarks::ImageFrame frame{};
+    frame.pixels = grayPixels;
+    frame.width = width;
+    frame.height = height;
+    frame.stride = stride;
+    frame.channels = 1U;
+    return FromMetrics(faceMeshEngine_.Run(frame));
+  }
+
+  return {};
+}
+
+FaceMeshResult TFLiteInterpreterManager::RunFaceMeshLandmarks(
+    const float* landmarkValues,
+    std::size_t valueCount,
+    uint32_t width,
+    uint32_t height) const {
+  std::lock_guard<std::mutex> lock(mutex_);
+  if (landmarkValues == nullptr || valueCount < 468U * 3U) {
+    return {};
+  }
+
+  const auto landmarks =
+      offlineface::landmarks::FaceMeshEngine::ParseLandmarks(
+          landmarkValues, valueCount);
+  return FromMetrics(offlineface::landmarks::FaceMeshEngine::ComputeMetrics(
+      landmarks, width, height));
 }
 
 std::vector<float> TFLiteInterpreterManager::RunEmbedding(
@@ -47,7 +100,7 @@ std::vector<float> TFLiteInterpreterManager::RunEmbedding(
     return {};
   }
 
-  return RunMockEmbedding(grayPixels, width, height, stride);
+  return mobileFaceNetRunner_.Run(grayPixels, width, height, stride);
 }
 
 InterpreterThreadBudget TFLiteInterpreterManager::GetThreadBudget() const {
@@ -92,53 +145,25 @@ FaceMeshResult TFLiteInterpreterManager::RunMockFaceMesh(
                                   static_cast<float>(samples * 255U);
 
   FaceMeshResult result{};
-  result.faceDetected = normalizedCenter > 0.05f;
-  result.eyeAspectRatio = result.faceDetected ? 0.3f : 0.0f;
-  result.mouthAspectRatio = result.faceDetected ? 0.2f : 0.0f;
+  result.faceDetected = false;
+  result.eyeAspectRatio = 0.0f;
+  result.mouthAspectRatio = 0.0f;
   result.yawDegrees = 0.0f;
+  result.pitchDegrees = 0.0f;
+  result.rollDegrees = 0.0f;
   return result;
 }
 
-std::vector<float> TFLiteInterpreterManager::RunMockEmbedding(
-    const uint8_t* grayPixels,
-    uint32_t width,
-    uint32_t height,
-    uint32_t stride) const {
-  if (grayPixels == nullptr || width == 0U || height == 0U) {
-    return {};
-  }
-
-  constexpr std::size_t kEmbeddingSize = 128U;
-  std::vector<float> embedding(kEmbeddingSize, 0.0f);
-  const uint32_t blockWidth = std::max(1U, width / 16U);
-  const uint32_t blockHeight = std::max(1U, height / 8U);
-  std::size_t slot = 0U;
-
-  for (uint32_t by = 0; by < 8U && slot < kEmbeddingSize; ++by) {
-    for (uint32_t bx = 0; bx < 16U && slot < kEmbeddingSize; ++bx) {
-      uint64_t sum = 0U;
-      uint32_t count = 0U;
-      const uint32_t startY = by * blockHeight;
-      const uint32_t endY = std::min(height, startY + blockHeight);
-      const uint32_t startX = bx * blockWidth;
-      const uint32_t endX = std::min(width, startX + blockWidth);
-
-      for (uint32_t row = startY; row < endY; ++row) {
-        for (uint32_t column = startX; column < endX; ++column) {
-          sum += grayPixels[(row * stride) + column];
-          ++count;
-        }
-      }
-
-      embedding[slot++] =
-          count == 0U ? 0.0f
-                      : static_cast<float>(sum) /
-                            static_cast<float>(count * 255U);
-    }
-  }
-
-  offlineface::common::NormalizeL2(embedding.data(), embedding.size());
-  return embedding;
+FaceMeshResult TFLiteInterpreterManager::FromMetrics(
+    const offlineface::landmarks::FaceMetrics& metrics) {
+  FaceMeshResult result{};
+  result.faceDetected = metrics.faceDetected;
+  result.eyeAspectRatio = metrics.ear;
+  result.mouthAspectRatio = metrics.mar;
+  result.yawDegrees = metrics.yaw;
+  result.pitchDegrees = metrics.pitch;
+  result.rollDegrees = metrics.roll;
+  return result;
 }
 
 void TFLiteInterpreterManager::ConfigureThreadBudget() {

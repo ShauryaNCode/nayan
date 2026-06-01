@@ -42,6 +42,9 @@ jsi::Value JSIHostObject::get(jsi::Runtime& rt, const jsi::PropNameID& name) {
   if (propertyName == "accepted") {
     return jsi::Value(result_->accepted);
   }
+  if (propertyName == "externalModelProcessed") {
+    return jsi::Value(result_->externalModelProcessed);
+  }
   if (propertyName == "timestampNs") {
     return jsi::Value(static_cast<double>(result_->timestampNs));
   }
@@ -70,6 +73,28 @@ jsi::Value JSIHostObject::get(jsi::Runtime& rt, const jsi::PropNameID& name) {
     return jsi::Value(
         static_cast<double>(static_cast<int>(result_->livenessState)));
   }
+  if (propertyName == "livenessChallenge") {
+    return jsi::Value(
+        static_cast<double>(static_cast<int>(result_->livenessChallenge)));
+  }
+  if (propertyName == "faceDetected") {
+    return jsi::Value(result_->faceDetected);
+  }
+  if (propertyName == "ear") {
+    return jsi::Value(static_cast<double>(result_->ear));
+  }
+  if (propertyName == "mar") {
+    return jsi::Value(static_cast<double>(result_->mar));
+  }
+  if (propertyName == "yaw") {
+    return jsi::Value(static_cast<double>(result_->yaw));
+  }
+  if (propertyName == "pitch") {
+    return jsi::Value(static_cast<double>(result_->pitch));
+  }
+  if (propertyName == "roll") {
+    return jsi::Value(static_cast<double>(result_->roll));
+  }
   if (propertyName == "embedding") {
     return jsi::Value(rt, CreateEmbeddingTypedArray(rt));
   }
@@ -85,8 +110,9 @@ jsi::Value JSIHostObject::get(jsi::Runtime& rt, const jsi::PropNameID& name) {
 
 std::vector<jsi::PropNameID> JSIHostObject::getPropertyNames(jsi::Runtime& rt) {
   std::vector<jsi::PropNameID> names;
-  names.reserve(13);
+  names.reserve(20);
   names.emplace_back(jsi::PropNameID::forAscii(rt, "accepted"));
+  names.emplace_back(jsi::PropNameID::forAscii(rt, "externalModelProcessed"));
   names.emplace_back(jsi::PropNameID::forAscii(rt, "timestampNs"));
   names.emplace_back(jsi::PropNameID::forAscii(rt, "sharpnessScore"));
   names.emplace_back(jsi::PropNameID::forAscii(rt, "faceMeshProcessed"));
@@ -96,6 +122,13 @@ std::vector<jsi::PropNameID> JSIHostObject::getPropertyNames(jsi::Runtime& rt) {
   names.emplace_back(jsi::PropNameID::forAscii(rt, "faceMeshThreadCount"));
   names.emplace_back(jsi::PropNameID::forAscii(rt, "mobileFaceNetThreadCount"));
   names.emplace_back(jsi::PropNameID::forAscii(rt, "livenessState"));
+  names.emplace_back(jsi::PropNameID::forAscii(rt, "livenessChallenge"));
+  names.emplace_back(jsi::PropNameID::forAscii(rt, "faceDetected"));
+  names.emplace_back(jsi::PropNameID::forAscii(rt, "ear"));
+  names.emplace_back(jsi::PropNameID::forAscii(rt, "mar"));
+  names.emplace_back(jsi::PropNameID::forAscii(rt, "yaw"));
+  names.emplace_back(jsi::PropNameID::forAscii(rt, "pitch"));
+  names.emplace_back(jsi::PropNameID::forAscii(rt, "roll"));
   names.emplace_back(jsi::PropNameID::forAscii(rt, "embedding"));
   names.emplace_back(jsi::PropNameID::forAscii(rt, "embeddingLength"));
   names.emplace_back(jsi::PropNameID::forAscii(rt, "embeddingByteLength"));

@@ -1,3 +1,52 @@
+export type NativeLivenessState =
+  | 'IDLE'
+  | 'DETECTED'
+  | 'CHALLENGE_ACTIVE'
+  | 'LIVENESS_PASS'
+  | 'LIVENESS_FAIL';
+
+export type NativeLivenessChallenge =
+  | 'NONE'
+  | 'BLINK'
+  | 'SMILE'
+  | 'TURN_LEFT'
+  | 'TURN_RIGHT';
+
+export type NativeLivenessStateCode = 0 | 1 | 2 | 3 | 4;
+export type NativeLivenessChallengeCode = 0 | 1 | 2 | 3 | 4;
+
+export type NativeFaceAuthResult = {
+  readonly accepted: boolean;
+  readonly externalModelProcessed: boolean;
+  readonly timestampNs: number;
+  readonly sharpnessScore: number;
+  readonly faceMeshProcessed: boolean;
+  readonly mobileFaceNetProcessed: boolean;
+  readonly droppedFrameCount: number;
+  readonly replacedFrameCount: number;
+  readonly faceMeshThreadCount: number;
+  readonly mobileFaceNetThreadCount: number;
+  readonly livenessState: NativeLivenessStateCode;
+  readonly livenessChallenge: NativeLivenessChallengeCode;
+  readonly faceDetected: boolean;
+  readonly ear: number;
+  readonly mar: number;
+  readonly yaw: number;
+  readonly pitch: number;
+  readonly roll: number;
+  readonly embedding: Float32Array;
+  readonly embeddingLength: number;
+  readonly embeddingByteLength: number;
+};
+
+export type NativeFaceAuthModule = {
+  getLatestResult(): NativeFaceAuthResult;
+  isInitialized(): boolean;
+  setLivenessState(state: NativeLivenessStateCode): boolean;
+  setLivenessChallenge(challenge: NativeLivenessChallengeCode): boolean;
+  readonly frameProcessorRegistryReady: boolean;
+};
+
 export interface NativeDatabasePassphraseResult {
   passphrase: string;
   keyAlias: string;
@@ -14,9 +63,10 @@ export interface NativeBridgeModule {
     height: number,
     stride: number,
     timestampNs: number,
-  ) => Promise<boolean>;
+): Promise<boolean>;
+  setLivenessState?: (state: NativeLivenessState) => Promise<void>;
+  setLivenessChallenge?: (challenge: NativeLivenessChallenge) => Promise<void>;
   setLivenessPassed?: (passed: boolean) => Promise<void>;
-  setLivenessState?: (state: string) => Promise<void>;
   generateSecureRandomBase64: (byteLength: number) => Promise<string>;
   deriveDatabasePassphrase: (
     nonceBase64: string,
