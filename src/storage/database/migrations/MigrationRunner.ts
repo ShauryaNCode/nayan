@@ -4,6 +4,7 @@ import type {
 } from '@op-engineering/op-sqlite';
 
 import {initialSchemaMigration} from './001_initial_schema';
+import {personEmbeddingCryptoMigration} from './002_person_embedding_crypto';
 
 export interface Migration {
   version: number;
@@ -22,7 +23,10 @@ export interface MigrationRunnerResult {
   latestVersion: number;
 }
 
-export const migrations: Migration[] = [initialSchemaMigration];
+export const migrations: Migration[] = [
+  initialSchemaMigration,
+  personEmbeddingCryptoMigration,
+];
 
 const CREATE_MIGRATIONS_TABLE_SQL = `
   CREATE TABLE IF NOT EXISTS schema_migrations (

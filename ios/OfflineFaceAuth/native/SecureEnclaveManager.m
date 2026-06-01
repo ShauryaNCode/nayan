@@ -6,6 +6,7 @@
 
 static NSString *const NayanDatabaseKeyAlias = @"offline_face_auth_db_v1";
 static NSString *const NayanKeychainService = @"com.offlinefaceauth.nayan.db-key";
+static NSString *const NayanPersonKeyAliasPrefix = @"face_embed_key_";
 
 @implementation SecureEnclaveManager
 
@@ -100,10 +101,192 @@ RCT_REMAP_METHOD(deriveDatabasePassphrase,
   });
 }
 
+RCT_REMAP_METHOD(generatePersonKey,
+                 generatePersonKeyWithPersonnelId:(NSString *)personnelId
+                 resolver:(RCTPromiseResolveBlock)resolve
+                 rejecter:(RCTPromiseRejectBlock)reject)
+{
+  NSString *alias = [self personKeyAliasForPersonnelId:personnelId];
+  if (alias == nil) {
+    reject(@"E_PERSON_KEY_GENERATE", @"personnelId must not be empty", nil);
+    return;
+  }
+
+  SecKeyRef existingKey = [self copyExistingPrivateKeyForAlias:alias];
+  if (existingKey != nil) {
+    CFRelease(existingKey);
+    reject(@"E_PERSON_KEY_GENERATE", @"Person key already exists", nil);
+    return;
+  }
+
+  NSError *error = nil;
+  BOOL secureEnclaveBacked = NO;
+  SecKeyRef privateKey =
+      [self copyOrCreatePrivateKeyForAlias:alias
+                       secureEnclaveBacked:&secureEnclaveBacked
+                                      error:&error];
+
+  if (privateKey == nil) {
+    reject(@"E_PERSON_KEY_GENERATE", @"Failed to create person key", error);
+    return;
+  }
+
+  CFRelease(privateKey);
+  resolve(@YES);
+}
+
+RCT_REMAP_METHOD(deletePersonKey,
+                 deletePersonKeyWithPersonnelId:(NSString *)personnelId
+                 resolver:(RCTPromiseResolveBlock)resolve
+                 rejecter:(RCTPromiseRejectBlock)reject)
+{
+  NSString *alias = [self personKeyAliasForPersonnelId:personnelId];
+  if (alias == nil) {
+    reject(@"E_PERSON_KEY_DELETE", @"personnelId must not be empty", nil);
+    return;
+  }
+
+  NSData *tag = [alias dataUsingEncoding:NSUTF8StringEncoding];
+  NSDictionary *query = @{
+    (__bridge id)kSecClass : (__bridge id)kSecClassKey,
+    (__bridge id)kSecAttrApplicationTag : tag,
+    (__bridge id)kSecAttrKeyType : (__bridge id)kSecAttrKeyTypeECSECPrimeRandom
+  };
+
+  OSStatus status = SecItemDelete((__bridge CFDictionaryRef)query);
+  if (status == errSecSuccess || status == errSecItemNotFound) {
+    resolve(@(status == errSecSuccess));
+    return;
+  }
+
+  NSError *error = [NSError errorWithDomain:NSOSStatusErrorDomain code:status userInfo:nil];
+  reject(@"E_PERSON_KEY_DELETE", @"Failed to delete person key", error);
+}
+
+RCT_REMAP_METHOD(wrapDEK,
+                 wrapDEKWithPersonnelId:(NSString *)personnelId
+                 dekHex:(NSString *)dekHex
+                 resolver:(RCTPromiseResolveBlock)resolve
+                 rejecter:(RCTPromiseRejectBlock)reject)
+{
+  NSString *alias = [self personKeyAliasForPersonnelId:personnelId];
+  if (alias == nil) {
+    reject(@"E_PERSON_DEK_WRAP", @"personnelId must not be empty", nil);
+    return;
+  }
+
+  NSData *dekData = [self dataFromHexString:dekHex];
+  if (dekData == nil || dekData.length != 32) {
+    reject(@"E_PERSON_DEK_WRAP", @"dekHex must contain exactly 32 bytes", nil);
+    return;
+  }
+
+  SecKeyRef privateKey = [self copyExistingPrivateKeyForAlias:alias];
+  if (privateKey == nil) {
+    reject(@"E_PERSON_DEK_WRAP", @"No person key exists", nil);
+    return;
+  }
+
+  SecKeyRef publicKey = SecKeyCopyPublicKey(privateKey);
+  CFRelease(privateKey);
+
+  if (publicKey == nil) {
+    reject(@"E_PERSON_DEK_WRAP", @"Failed to read person public key", nil);
+    return;
+  }
+
+  SecKeyAlgorithm algorithm =
+      kSecKeyAlgorithmECIESEncryptionCofactorVariableIVX963SHA256AESGCM;
+  if (!SecKeyIsAlgorithmSupported(publicKey, kSecKeyOperationTypeEncrypt, algorithm)) {
+    CFRelease(publicKey);
+    reject(@"E_PERSON_DEK_WRAP", @"ECIES AES-GCM is unavailable on this device", nil);
+    return;
+  }
+
+  CFErrorRef cfError = nil;
+  CFDataRef encryptedData =
+      SecKeyCreateEncryptedData(publicKey, algorithm, (__bridge CFDataRef)dekData, &cfError);
+  CFRelease(publicKey);
+
+  if (encryptedData == nil) {
+    NSError *error = CFBridgingRelease(cfError);
+    reject(@"E_PERSON_DEK_WRAP", @"Failed to wrap DEK", error);
+    return;
+  }
+
+  NSData *wrappedData = CFBridgingRelease(encryptedData);
+  resolve([wrappedData base64EncodedStringWithOptions:0]);
+}
+
+RCT_REMAP_METHOD(unwrapDEK,
+                 unwrapDEKWithPersonnelId:(NSString *)personnelId
+                 wrappedDEKBase64:(NSString *)wrappedDEKBase64
+                 resolver:(RCTPromiseResolveBlock)resolve
+                 rejecter:(RCTPromiseRejectBlock)reject)
+{
+  NSString *alias = [self personKeyAliasForPersonnelId:personnelId];
+  if (alias == nil) {
+    reject(@"E_PERSON_DEK_UNWRAP", @"personnelId must not be empty", nil);
+    return;
+  }
+
+  NSData *wrappedData =
+      [[NSData alloc] initWithBase64EncodedString:wrappedDEKBase64 options:0];
+  if (wrappedData == nil || wrappedData.length == 0) {
+    reject(@"E_PERSON_DEK_UNWRAP", @"wrappedDEKBase64 is not valid base64", nil);
+    return;
+  }
+
+  SecKeyRef privateKey = [self copyExistingPrivateKeyForAlias:alias];
+  if (privateKey == nil) {
+    reject(@"E_PERSON_DEK_UNWRAP", @"No person key exists", nil);
+    return;
+  }
+
+  SecKeyAlgorithm algorithm =
+      kSecKeyAlgorithmECIESEncryptionCofactorVariableIVX963SHA256AESGCM;
+  if (!SecKeyIsAlgorithmSupported(privateKey, kSecKeyOperationTypeDecrypt, algorithm)) {
+    CFRelease(privateKey);
+    reject(@"E_PERSON_DEK_UNWRAP", @"ECIES AES-GCM is unavailable on this device", nil);
+    return;
+  }
+
+  CFErrorRef cfError = nil;
+  CFDataRef decryptedData =
+      SecKeyCreateDecryptedData(privateKey,
+                                algorithm,
+                                (__bridge CFDataRef)wrappedData,
+                                &cfError);
+  CFRelease(privateKey);
+
+  if (decryptedData == nil) {
+    NSError *error = CFBridgingRelease(cfError);
+    reject(@"E_PERSON_DEK_UNWRAP", @"Failed to unwrap DEK", error);
+    return;
+  }
+
+  NSData *dekData = CFBridgingRelease(decryptedData);
+  if (dekData.length != 32) {
+    reject(@"E_PERSON_DEK_UNWRAP", @"Unwrapped DEK is not 32 bytes", nil);
+    return;
+  }
+
+  resolve([self hexStringFromData:dekData]);
+}
+
 - (SecKeyRef)copyOrCreatePrivateKey:(BOOL *)secureEnclaveBacked
                               error:(NSError **)error CF_RETURNS_RETAINED
 {
-  SecKeyRef existingKey = [self copyExistingPrivateKey];
+  return [self copyOrCreatePrivateKeyForAlias:NayanDatabaseKeyAlias
+                          secureEnclaveBacked:secureEnclaveBacked
+                                         error:error];
+}
+
+- (SecKeyRef)copyOrCreatePrivateKeyForAlias:(NSString *)alias
+                       secureEnclaveBacked:(BOOL *)secureEnclaveBacked
+                                      error:(NSError **)error CF_RETURNS_RETAINED
+{
+  SecKeyRef existingKey = [self copyExistingPrivateKeyForAlias:alias];
   if (existingKey != nil) {
     if (secureEnclaveBacked != NULL) {
       *secureEnclaveBacked = [self existingKeyUsesSecureEnclave:existingKey];
@@ -112,21 +295,35 @@ RCT_REMAP_METHOD(deriveDatabasePassphrase,
   }
 
 #if TARGET_OS_SIMULATOR
-  return [self createKeychainPrivateKey:NO secureEnclaveBacked:secureEnclaveBacked error:error];
+  return [self createKeychainPrivateKeyForAlias:alias
+                            preferSecureEnclave:NO
+                           secureEnclaveBacked:secureEnclaveBacked
+                                          error:error];
 #else
   SecKeyRef secureEnclaveKey =
-      [self createKeychainPrivateKey:YES secureEnclaveBacked:secureEnclaveBacked error:error];
+      [self createKeychainPrivateKeyForAlias:alias
+                         preferSecureEnclave:YES
+                        secureEnclaveBacked:secureEnclaveBacked
+                                       error:error];
   if (secureEnclaveKey != nil) {
     return secureEnclaveKey;
   }
 
-  return [self createKeychainPrivateKey:NO secureEnclaveBacked:secureEnclaveBacked error:error];
+  return [self createKeychainPrivateKeyForAlias:alias
+                            preferSecureEnclave:NO
+                           secureEnclaveBacked:secureEnclaveBacked
+                                          error:error];
 #endif
 }
 
 - (SecKeyRef)copyExistingPrivateKey CF_RETURNS_RETAINED
 {
-  NSData *tag = [NayanDatabaseKeyAlias dataUsingEncoding:NSUTF8StringEncoding];
+  return [self copyExistingPrivateKeyForAlias:NayanDatabaseKeyAlias];
+}
+
+- (SecKeyRef)copyExistingPrivateKeyForAlias:(NSString *)alias CF_RETURNS_RETAINED
+{
+  NSData *tag = [alias dataUsingEncoding:NSUTF8StringEncoding];
   NSDictionary *query = @{
     (__bridge id)kSecClass : (__bridge id)kSecClassKey,
     (__bridge id)kSecAttrApplicationTag : tag,
@@ -145,7 +342,18 @@ RCT_REMAP_METHOD(deriveDatabasePassphrase,
                   secureEnclaveBacked:(BOOL *)secureEnclaveBacked
                                  error:(NSError **)error CF_RETURNS_RETAINED
 {
-  NSData *tag = [NayanDatabaseKeyAlias dataUsingEncoding:NSUTF8StringEncoding];
+  return [self createKeychainPrivateKeyForAlias:NayanDatabaseKeyAlias
+                            preferSecureEnclave:preferSecureEnclave
+                           secureEnclaveBacked:secureEnclaveBacked
+                                          error:error];
+}
+
+- (SecKeyRef)createKeychainPrivateKeyForAlias:(NSString *)alias
+                          preferSecureEnclave:(BOOL)preferSecureEnclave
+                         secureEnclaveBacked:(BOOL *)secureEnclaveBacked
+                                        error:(NSError **)error CF_RETURNS_RETAINED
+{
+  NSData *tag = [alias dataUsingEncoding:NSUTF8StringEncoding];
   SecAccessControlCreateFlags flags = kSecAccessControlPrivateKeyUsage;
   CFErrorRef accessControlError = nil;
   SecAccessControlRef accessControl =
@@ -195,6 +403,49 @@ RCT_REMAP_METHOD(deriveDatabasePassphrase,
   }
 
   return privateKey;
+}
+
+- (NSString *)personKeyAliasForPersonnelId:(NSString *)personnelId
+{
+  if (personnelId == nil || personnelId.length == 0) {
+    return nil;
+  }
+  NSString *trimmed =
+      [personnelId stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+  if (trimmed.length == 0) {
+    return nil;
+  }
+  return [NayanPersonKeyAliasPrefix stringByAppendingString:trimmed];
+}
+
+- (NSData *)dataFromHexString:(NSString *)hexString
+{
+  if (hexString == nil || hexString.length % 2 != 0) {
+    return nil;
+  }
+
+  NSMutableData *data = [NSMutableData dataWithCapacity:hexString.length / 2];
+  for (NSUInteger index = 0; index < hexString.length; index += 2) {
+    NSString *byteString = [hexString substringWithRange:NSMakeRange(index, 2)];
+    unsigned int byteValue = 0;
+    NSScanner *scanner = [NSScanner scannerWithString:byteString];
+    if (![scanner scanHexInt:&byteValue] || byteValue > 0xff) {
+      return nil;
+    }
+    uint8_t byte = (uint8_t)byteValue;
+    [data appendBytes:&byte length:1];
+  }
+  return data;
+}
+
+- (NSString *)hexStringFromData:(NSData *)data
+{
+  const unsigned char *bytes = (const unsigned char *)data.bytes;
+  NSMutableString *hexString = [NSMutableString stringWithCapacity:data.length * 2];
+  for (NSUInteger index = 0; index < data.length; index += 1) {
+    [hexString appendFormat:@"%02x", bytes[index]];
+  }
+  return hexString;
 }
 
 - (BOOL)existingKeyUsesSecureEnclave:(SecKeyRef)privateKey

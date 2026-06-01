@@ -20,17 +20,23 @@ import android.os.Build;
 import android.util.Base64;
 
 import java.nio.ByteBuffer;
+import java.security.GeneralSecurityException;
 import java.security.SecureRandom;
+import java.util.Arrays;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 import javax.crypto.Cipher;
 import javax.crypto.SecretKey;
+import javax.crypto.spec.GCMParameterSpec;
 
 @ReactModule(name = NativeBridge.NAME)
 public final class NativeBridge extends ReactContextBaseJavaModule {
   public static final String NAME = "NativeBridge";
   private static final String DEFAULT_MODEL_PATH = "/sdcard/Download/mobilefacenet.tflite";
   private static final String AES_GCM_TRANSFORMATION = "AES/GCM/NoPadding";
+  private static final int DEK_BYTES = 32;
+  private static final int GCM_IV_BYTES = 12;
+  private static final int GCM_TAG_BITS = 128;
   private static final AtomicBoolean IS_JSI_INSTALLED = new AtomicBoolean(false);
 
   static {
@@ -177,6 +183,85 @@ public final class NativeBridge extends ReactContextBaseJavaModule {
       promise.resolve(result);
     } catch (Throwable throwable) {
       promise.reject("E_DB_PASSPHRASE", throwable);
+    }
+  }
+
+  @ReactMethod
+  public void generatePersonKey(String personnelId, Promise promise) {
+    try {
+      KeystoreManager.generatePersonAesGcmKey(personnelId);
+      promise.resolve(null);
+    } catch (Throwable throwable) {
+      promise.reject("E_PERSON_KEY_GENERATE", throwable);
+    }
+  }
+
+  @ReactMethod
+  public void deletePersonKey(String personnelId, Promise promise) {
+    try {
+      promise.resolve(KeystoreManager.deletePersonAesGcmKey(personnelId));
+    } catch (Throwable throwable) {
+      promise.reject("E_PERSON_KEY_DELETE", throwable);
+    }
+  }
+
+  @ReactMethod
+  public void wrapDEK(String personnelId, String dekHex, Promise promise) {
+    byte[] dek = null;
+
+    try {
+      dek = CryptoUtils.hexToBytes(dekHex, DEK_BYTES);
+      final SecretKey key = KeystoreManager.getPersonAesGcmKey(personnelId);
+      final Cipher cipher = Cipher.getInstance(AES_GCM_TRANSFORMATION);
+      final byte[] iv = new byte[GCM_IV_BYTES];
+      new SecureRandom().nextBytes(iv);
+
+      cipher.init(
+          Cipher.ENCRYPT_MODE,
+          key,
+          new GCMParameterSpec(GCM_TAG_BITS, iv));
+
+      final byte[] ciphertextAndTag = cipher.doFinal(dek);
+      final byte[] wrapped = CryptoUtils.concat(iv, ciphertextAndTag);
+      promise.resolve(Base64.encodeToString(wrapped, Base64.NO_WRAP));
+    } catch (Throwable throwable) {
+      promise.reject("E_PERSON_DEK_WRAP", throwable);
+    } finally {
+      CryptoUtils.wipe(dek);
+    }
+  }
+
+  @ReactMethod
+  public void unwrapDEK(String personnelId, String wrappedDEKBase64, Promise promise) {
+    byte[] plaintext = null;
+
+    try {
+      final byte[] wrapped = Base64.decode(wrappedDEKBase64, Base64.NO_WRAP);
+      if (wrapped.length <= GCM_IV_BYTES) {
+        throw new GeneralSecurityException("wrapped DEK is too short");
+      }
+
+      final byte[] iv = Arrays.copyOfRange(wrapped, 0, GCM_IV_BYTES);
+      final byte[] ciphertextAndTag =
+          Arrays.copyOfRange(wrapped, GCM_IV_BYTES, wrapped.length);
+      final SecretKey key = KeystoreManager.getPersonAesGcmKey(personnelId);
+      final Cipher cipher = Cipher.getInstance(AES_GCM_TRANSFORMATION);
+
+      cipher.init(
+          Cipher.DECRYPT_MODE,
+          key,
+          new GCMParameterSpec(GCM_TAG_BITS, iv));
+
+      plaintext = cipher.doFinal(ciphertextAndTag);
+      if (plaintext.length != DEK_BYTES) {
+        throw new GeneralSecurityException("unwrapped DEK is not 32 bytes");
+      }
+
+      promise.resolve(CryptoUtils.bytesToHex(plaintext));
+    } catch (Throwable throwable) {
+      promise.reject("E_PERSON_DEK_UNWRAP", throwable);
+    } finally {
+      CryptoUtils.wipe(plaintext);
     }
   }
 

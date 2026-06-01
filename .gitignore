@@ -5,6 +5,7 @@ node_modules/
 .env
 .env.*
 android/local.properties
+admin_private.pem
 
 # React Native / Metro
 *.jsbundle

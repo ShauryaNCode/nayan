@@ -141,7 +141,7 @@ describe('T3.1 SQLCipher setup', () => {
       location: undefined,
       encryptionKey: 'derived-passphrase',
     });
-    expect(openResult.migrationResult?.latestVersion).toBe(1);
+    expect(openResult.migrationResult?.latestVersion).toBe(2);
     expect(statements.slice(0, 5)).toEqual([
       'PRAGMA journal_mode=WAL;',
       'PRAGMA synchronous=NORMAL;',
@@ -161,7 +161,7 @@ describe('T3.1 SQLCipher setup', () => {
 
     const migrationResult = runMigrations(db as any);
 
-    expect(migrationResult.applied).toHaveLength(1);
+    expect(migrationResult.applied).toHaveLength(2);
     expect(statements).toContain('BEGIN IMMEDIATE;');
     expect(
       statements.some((statement) =>
@@ -171,6 +171,11 @@ describe('T3.1 SQLCipher setup', () => {
     expect(
       statements.some((statement) =>
         statement.includes('idx_attendance_ledger_synced_chain'),
+      ),
+    ).toBe(true);
+    expect(
+      statements.some((statement) =>
+        statement.startsWith('CREATE TABLE IF NOT EXISTS consent_log'),
       ),
     ).toBe(true);
     expect(statements).toContain('COMMIT;');

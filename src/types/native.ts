@@ -21,6 +21,13 @@ export interface NativeBridgeModule {
   deriveDatabasePassphrase: (
     nonceBase64: string,
   ) => Promise<NativeDatabasePassphraseResult>;
+  generatePersonKey: (personnelId: string) => Promise<void>;
+  wrapDEK: (personnelId: string, dekHex: string) => Promise<string>;
+  unwrapDEK: (
+    personnelId: string,
+    wrappedDEKBase64: string,
+  ) => Promise<string>;
+  deletePersonKey?: (personnelId: string) => Promise<boolean | void>;
 }
 
 export interface SecureEnclaveManagerModule {
@@ -28,4 +35,24 @@ export interface SecureEnclaveManagerModule {
   deriveDatabasePassphrase: (
     nonceBase64: string,
   ) => Promise<NativeDatabasePassphraseResult>;
+  generatePersonKey: (personnelId: string) => Promise<void>;
+  wrapDEK: (personnelId: string, dekHex: string) => Promise<string>;
+  unwrapDEK: (
+    personnelId: string,
+    wrappedDEKBase64: string,
+  ) => Promise<string>;
+  deletePersonKey?: (personnelId: string) => Promise<boolean | void>;
+}
+
+export interface EmbeddingCryptoModule {
+  encrypt: (
+    embeddingBase64: string,
+    personnelId: string,
+    dekHex: string,
+  ) => Promise<string>;
+  decrypt: (
+    encryptedBlobBase64: string,
+    personnelId: string,
+    dekHex: string,
+  ) => Promise<string>;
 }
