@@ -1,4 +1,4 @@
-﻿export type NativeLivenessState =
+export type NativeLivenessState =
   | 'IDLE'
   | 'DETECTED'
   | 'CHALLENGE_ACTIVE'
@@ -47,17 +47,62 @@ export type NativeFaceAuthModule = {
   readonly frameProcessorRegistryReady: boolean;
 };
 
-export type NativeBridgeModule = {
-  initializeEngine(modelPath?: string | null): Promise<void>;
-  ensureJsiInstalled(): Promise<boolean>;
-  enqueueFrame(
+export interface NativeDatabasePassphraseResult {
+  passphrase: string;
+  keyAlias: string;
+  provider: string;
+  envelopeVersion: number;
+}
+
+export interface NativeBridgeModule {
+  initializeEngine: (modelPath?: string) => Promise<void>;
+  ensureJsiInstalled: () => Promise<boolean>;
+  enqueueFrame?: (
     buffer: ArrayBuffer,
     width: number,
     height: number,
     stride: number,
     timestampNs: number,
-  ): Promise<boolean>;
-  setLivenessState(state: NativeLivenessState): Promise<void>;
-  setLivenessChallenge(challenge: NativeLivenessChallenge): Promise<void>;
-  setLivenessPassed(passed: boolean): Promise<void>;
-};
+): Promise<boolean>;
+  setLivenessState?: (state: NativeLivenessState) => Promise<void>;
+  setLivenessChallenge?: (challenge: NativeLivenessChallenge) => Promise<void>;
+  setLivenessPassed?: (passed: boolean) => Promise<void>;
+  generateSecureRandomBase64: (byteLength: number) => Promise<string>;
+  deriveDatabasePassphrase: (
+    nonceBase64: string,
+  ) => Promise<NativeDatabasePassphraseResult>;
+  generatePersonKey: (personnelId: string) => Promise<void>;
+  wrapDEK: (personnelId: string, dekHex: string) => Promise<string>;
+  unwrapDEK: (
+    personnelId: string,
+    wrappedDEKBase64: string,
+  ) => Promise<string>;
+  deletePersonKey?: (personnelId: string) => Promise<boolean | void>;
+}
+
+export interface SecureEnclaveManagerModule {
+  generateSecureRandomBase64: (byteLength: number) => Promise<string>;
+  deriveDatabasePassphrase: (
+    nonceBase64: string,
+  ) => Promise<NativeDatabasePassphraseResult>;
+  generatePersonKey: (personnelId: string) => Promise<void>;
+  wrapDEK: (personnelId: string, dekHex: string) => Promise<string>;
+  unwrapDEK: (
+    personnelId: string,
+    wrappedDEKBase64: string,
+  ) => Promise<string>;
+  deletePersonKey?: (personnelId: string) => Promise<boolean | void>;
+}
+
+export interface EmbeddingCryptoModule {
+  encrypt: (
+    embeddingBase64: string,
+    personnelId: string,
+    dekHex: string,
+  ) => Promise<string>;
+  decrypt: (
+    encryptedBlobBase64: string,
+    personnelId: string,
+    dekHex: string,
+  ) => Promise<string>;
+}
