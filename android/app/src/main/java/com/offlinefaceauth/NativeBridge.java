@@ -442,6 +442,7 @@ public final class NativeBridge extends ReactContextBaseJavaModule {
     }
 
     return enqueueVisionCameraFrame(frame);
+  }
   private static String resolveKeyProvider(KeystoreManager.KeyHardwareInfo hardwareInfo) {
     if (hardwareInfo.strongBoxBacked) {
       return "android_keystore_strongbox";

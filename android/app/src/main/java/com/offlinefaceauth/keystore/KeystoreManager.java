@@ -125,8 +125,13 @@ public final class KeystoreManager {
       final SecretKeyFactory factory =
           SecretKeyFactory.getInstance(key.getAlgorithm(), ANDROID_KEYSTORE);
       final KeyInfo keyInfo = (KeyInfo) factory.getKeySpec(key, KeyInfo.class);
-      final boolean strongBoxBacked =
-          Build.VERSION.SDK_INT >= Build.VERSION_CODES.P && keyInfo.isStrongBoxBacked();
+      boolean strongBoxBacked = false;
+      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+        try {
+          strongBoxBacked = (Boolean) KeyInfo.class.getMethod("isStrongBoxBacked").invoke(keyInfo);
+        } catch (Exception ignored) {
+        }
+      }
       return new KeyHardwareInfo(keyInfo.isInsideSecureHardware(), strongBoxBacked);
     } catch (GeneralSecurityException exception) {
       return new KeyHardwareInfo(false, false);
