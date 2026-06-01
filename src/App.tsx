@@ -12,6 +12,10 @@ import {
 import {startConnectivityWatcher} from './sync/connectivity/ConnectivityWatcher';
 
 import {CameraView} from './components/camera/CameraView';
+import {
+  initializeFrameProcessorBridge,
+  isNativeFrameProcessorPluginAvailable,
+} from './components/camera/FrameProcessorBridge';
 
 import {
   runMMKVSmokeTest,
@@ -21,6 +25,7 @@ import {
 
 type OfflineFaceAuthResult = {
   accepted: boolean;
+  externalModelProcessed?: boolean;
   timestampNs: number;
   sharpnessScore: number;
   faceMeshProcessed?: boolean;
@@ -30,6 +35,12 @@ type OfflineFaceAuthResult = {
   faceMeshThreadCount?: number;
   mobileFaceNetThreadCount?: number;
   livenessState?: number;
+  faceDetected?: boolean;
+  ear?: number;
+  mar?: number;
+  yaw?: number;
+  pitch?: number;
+  roll?: number;
   embedding: Float32Array;
   embeddingLength?: number;
   embeddingByteLength?: number;
@@ -46,6 +57,7 @@ type NativeBridgeModule = {
   ensureJsiInstalled: () => Promise<boolean>;
   setLivenessPassed?: (passed: boolean) => Promise<void>;
   setLivenessState?: (state: string) => Promise<void>;
+  setLivenessChallenge?: (challenge: string) => Promise<void>;
 };
 
 declare global {
@@ -89,6 +101,9 @@ const styles = StyleSheet.create({
   secondaryButton: {
     backgroundColor: '#0f766e',
   },
+  passButton: {
+    backgroundColor: '#7c3aed',
+  },
   disabledButton: {
     opacity: 0.6,
   },
@@ -100,6 +115,9 @@ const styles = StyleSheet.create({
     borderColor: '#1e293b',
     padding: 16,
     minHeight: 260,
+  },
+  statusSection: {
+    marginTop: 16,
   },
   consoleText: {
     color: '#bfdbfe',
@@ -123,6 +141,7 @@ function formatResult(result: OfflineFaceAuthResult): string {
   return JSON.stringify(
     {
       accepted: result.accepted,
+      externalModelProcessed: result.externalModelProcessed,
       timestampNs: result.timestampNs,
       sharpnessScore: result.sharpnessScore,
       faceMeshProcessed: result.faceMeshProcessed,
@@ -132,6 +151,12 @@ function formatResult(result: OfflineFaceAuthResult): string {
       faceMeshThreadCount: result.faceMeshThreadCount,
       mobileFaceNetThreadCount: result.mobileFaceNetThreadCount,
       livenessState: result.livenessState,
+      faceDetected: result.faceDetected,
+      ear: result.ear,
+      mar: result.mar,
+      yaw: result.yaw,
+      pitch: result.pitch,
+      roll: result.roll,
       embeddingLength: embeddingArray.length,
       embeddingPreview: preview,
     },
@@ -172,6 +197,8 @@ function formatStorageSmokeTestResults(
 export default function App(): React.JSX.Element {
   const [enginePresent, setEnginePresent] = useState<boolean>(false);
   const [initialized, setInitialized] = useState<boolean>(false);
+  const [frameProcessorPluginReady, setFrameProcessorPluginReady] =
+    useState<boolean>(false);
   const [storageTestRunning, setStorageTestRunning] = useState<boolean>(false);
   const [previewReady, setPreviewReady] = useState<boolean>(false);
   const [consoleOutput, setConsoleOutput] = useState<string>('Booting verification harness...');
@@ -190,10 +217,12 @@ export default function App(): React.JSX.Element {
       hasEngine && typeof engine?.isInitialized === 'function'
         ? Boolean(engine.isInitialized())
         : false;
+    const pluginAvailable = isNativeFrameProcessorPluginAvailable();
 
     setEnginePresent(hasEngine);
     setInitialized(isInitialized);
-    return {engine, hasEngine, isInitialized};
+    setFrameProcessorPluginReady(pluginAvailable);
+    return {engine, hasEngine, isInitialized, pluginAvailable};
   }, []);
 
   useEffect(() => {
@@ -207,8 +236,8 @@ export default function App(): React.JSX.Element {
           );
         }
 
-        await nativeBridge.initializeEngine(MODEL_PATH);
-        await nativeBridge.ensureJsiInstalled();
+        const pluginInstalled = await initializeFrameProcessorBridge(MODEL_PATH);
+        setFrameProcessorPluginReady(pluginInstalled);
 
         const deadline = Date.now() + 3000;
         while (!cancelled && Date.now() < deadline) {
@@ -217,6 +246,8 @@ export default function App(): React.JSX.Element {
             setConsoleOutput(
               `Native engine injected.\nInitialized: ${String(
                 status.isInitialized,
+              )}\nFrame processor plugin: ${String(
+                status.pluginAvailable,
               )}\nModel: ${MODEL_PATH}`,
             );
             return;
@@ -229,6 +260,8 @@ export default function App(): React.JSX.Element {
           status.hasEngine
             ? `Native engine injected.\nInitialized: ${String(
                 status.isInitialized,
+              )}\nFrame processor plugin: ${String(
+                status.pluginAvailable,
               )}\nModel: ${MODEL_PATH}`
             : 'Native engine bootstrap completed, but __offlineFaceAuth is still missing from the JS runtime.',
         );
@@ -288,21 +321,49 @@ export default function App(): React.JSX.Element {
     }
   }, []);
 
+  const handleMarkLivenessPassed = useCallback(async () => {
+    try {
+      if (nativeBridge?.setLivenessPassed == null) {
+        throw new Error('NativeBridge.setLivenessPassed is unavailable');
+      }
+
+      await nativeBridge.setLivenessPassed(true);
+      setConsoleOutput(
+        'Liveness FSM marked PASS for Phase 1 verification. Keep the camera on your face for one frame, then tap Read Latest Native Result.',
+      );
+      refreshStatus();
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.stack ?? error.message : String(error);
+      setConsoleOutput(`Liveness pass failure:\n${message}`);
+    }
+  }, [refreshStatus]);
+
   const summary = useMemo(
     () => [
       {label: 'Engine Presence', value: enginePresent ? 'Injected' : 'Missing'},
       {label: 'Camera Preview', value: previewReady ? 'Rendering' : 'Waiting'},
-        {
-          label: 'Initialization State',
-          value: initialized ? 'Initialized' : 'Not initialized',
-        },
-        {
-          label: 'Storage Smoke Test',
-          value: storageTestRunning ? 'Running' : 'Ready',
-        },
-        { label: 'Model Path', value: MODEL_PATH },
-      ],
-      [enginePresent, previewReady, initialized, storageTestRunning],
+      {
+        label: 'Frame Processor Plugin',
+        value: frameProcessorPluginReady ? 'Registered' : 'Unavailable',
+      },
+      {
+        label: 'Initialization State',
+        value: initialized ? 'Initialized' : 'Not initialized',
+      },
+      {
+        label: 'Storage Smoke Test',
+        value: storageTestRunning ? 'Running' : 'Ready',
+      },
+      {label: 'Model Path', value: MODEL_PATH},
+    ],
+    [
+      enginePresent,
+      previewReady,
+      frameProcessorPluginReady,
+      initialized,
+      storageTestRunning,
+    ],
   );
 
   return (
@@ -320,20 +381,22 @@ export default function App(): React.JSX.Element {
         <View style={styles.cameraSection}>
           <Text style={styles.cameraLabel}>Front Camera Preview</Text>
           <CameraView
+            key={frameProcessorPluginReady ? 'processor-ready' : 'processor-waiting'}
+            isActive={frameProcessorPluginReady}
             ringState={previewReady ? 'detected' : 'idle'}
             onPreviewReady={() => setPreviewReady(true)}
           />
         </View>
 
-        {summary.map((item) => (
-          <View key={item.label} style={styles.card}>
-            <Text style={styles.label}>{item.label}</Text>
-            <Text style={styles.value}>{item.value}</Text>
-          </View>
-        ))}
-
         <TouchableOpacity style={styles.button} onPress={handleLoopback}>
           <Text style={styles.buttonText}>Read Latest Native Result</Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          style={[styles.button, styles.passButton]}
+          onPress={handleMarkLivenessPassed}
+        >
+          <Text style={styles.buttonText}>Mark Liveness Passed</Text>
         </TouchableOpacity>
 
         <TouchableOpacity
@@ -354,6 +417,15 @@ export default function App(): React.JSX.Element {
 
         <View style={styles.console}>
           <Text style={styles.consoleText}>{consoleOutput}</Text>
+        </View>
+
+        <View style={styles.statusSection}>
+          {summary.map((item) => (
+            <View key={item.label} style={styles.card}>
+              <Text style={styles.label}>{item.label}</Text>
+              <Text style={styles.value}>{item.value}</Text>
+            </View>
+          ))}
         </View>
       </ScrollView>
     </SafeAreaView>

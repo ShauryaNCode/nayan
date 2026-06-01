@@ -42,6 +42,9 @@ jsi::Value JSIHostObject::get(jsi::Runtime& rt, const jsi::PropNameID& name) {
   if (propertyName == "accepted") {
     return jsi::Value(result_->accepted);
   }
+  if (propertyName == "externalModelProcessed") {
+    return jsi::Value(result_->externalModelProcessed);
+  }
   if (propertyName == "timestampNs") {
     return jsi::Value(static_cast<double>(result_->timestampNs));
   }
@@ -109,6 +112,7 @@ std::vector<jsi::PropNameID> JSIHostObject::getPropertyNames(jsi::Runtime& rt) {
   std::vector<jsi::PropNameID> names;
   names.reserve(20);
   names.emplace_back(jsi::PropNameID::forAscii(rt, "accepted"));
+  names.emplace_back(jsi::PropNameID::forAscii(rt, "externalModelProcessed"));
   names.emplace_back(jsi::PropNameID::forAscii(rt, "timestampNs"));
   names.emplace_back(jsi::PropNameID::forAscii(rt, "sharpnessScore"));
   names.emplace_back(jsi::PropNameID::forAscii(rt, "faceMeshProcessed"));

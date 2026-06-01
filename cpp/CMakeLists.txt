@@ -28,6 +28,7 @@ set(NAYAN_ENGINE_SOURCES
   ${CMAKE_CURRENT_SOURCE_DIR}/frame-processor/JSIHostObject.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/frame-processor/PixelBufferPool.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/inference/EmbeddingAverager.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/inference/MobileFaceNetRunner.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/inference/TFLiteInterpreterManager.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/landmarks/EARCalculator.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/landmarks/FaceMeshEngine.cpp

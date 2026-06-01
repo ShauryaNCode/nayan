@@ -31,6 +31,7 @@ enum class NativeLivenessChallenge : uint8_t {
 
 struct ProcessedFrameResult {
   bool accepted{false};
+  bool externalModelProcessed{false};
   bool faceMeshProcessed{false};
   bool mobileFaceNetProcessed{false};
   uint64_t timestampNs{0};
@@ -57,6 +58,7 @@ class FrameProcessorPlugin {
   FrameProcessorPlugin(const FrameProcessorPlugin&) = delete;
   FrameProcessorPlugin& operator=(const FrameProcessorPlugin&) = delete;
   bool EnqueueGrayFrame(const uint8_t* source, uint32_t width, uint32_t height, uint32_t stride, uint64_t timestampNs);
+  bool SubmitExternalModelResult(const float* landmarkValues, std::size_t landmarkValueCount, const float* embeddingValues, std::size_t embeddingValueCount, uint32_t width, uint32_t height, uint64_t timestampNs);
 #if defined(__APPLE__)
   bool EnqueueAppleLumaPlane(const void* pixelBufferRef, uint32_t width, uint32_t height, uint32_t stride, uint64_t timestampNs);
 #endif
@@ -75,6 +77,7 @@ class FrameProcessorPlugin {
   float ComputeSharpness(const uint8_t* pixels, uint32_t width, uint32_t height, uint32_t stride) const;
   std::shared_ptr<PixelBufferPool> pool_; std::shared_ptr<offlineface::clahe::CLAHEEngine> claheEngine_; std::shared_ptr<offlineface::inference::TFLiteInterpreterManager> interpreterManager_; std::shared_ptr<offlineface::inference::EmbeddingAverager> embeddingAverager_;
   std::atomic<FrameBuffer*> mailbox_{nullptr};
+  std::atomic<bool> isProcessing_{false};
   std::atomic<bool> running_{false};
   std::atomic<int> livenessState_{static_cast<int>(NativeLivenessState::kIdle)};
   std::atomic<uint64_t> droppedFrameCount_{0};

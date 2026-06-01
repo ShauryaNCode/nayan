@@ -1,0 +1,34 @@
+{
+  "bundleLimitMb": 20,
+  "preferredBundleLimitMb": 10,
+  "models": [
+    {
+      "id": "mobilefacenet",
+      "owner": "M1",
+      "expectedPath": "models/mobilefacenet/mobilefacenet.tflite",
+      "androidAssetPath": "mobilefacenet/mobilefacenet.tflite",
+      "androidExternalFallbackPath": "/sdcard/Download/mobilefacenet.tflite",
+      "targetFormat": "TensorFlow Lite FP16",
+      "targetSizeMb": 5,
+      "fileSize": 5243108, 
+      "sha256": "B67366E085EC9F6C2AFB05C10397A46EDEB823367ABAEC77F64F5CE946AC2847",
+      "output": "L2-normalized Float32Array[128]",
+      "allowedLicenses": ["Apache-2.0", "MIT", "BSD-2-Clause", "BSD-3-Clause"],
+      "sourceRequired": true
+    },
+    {
+      "id": "mediapipe-facemesh",
+      "owner": "M2",
+      "expectedPath": "models/facemesh/face_landmark.tflite",
+      "androidAssetPath": "facemesh/face_landmark.tflite",
+      "androidExternalFallbackPath": "/sdcard/Download/face_landmark.tflite",
+      "targetFormat": "TensorFlow Lite",
+      "targetSizeMb": 3,
+      "fileSize": 1242398, 
+      "sha256": "1055CB9D4A9CA8B8C688902A3A5194311138BA256BCC94E336D8373A5F30C814",
+      "output": "468 landmarks x 3 float coordinates",
+      "allowedLicenses": ["Apache-2.0"],
+      "sourceRequired": true
+    }
+  ]
+}

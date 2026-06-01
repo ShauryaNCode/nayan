@@ -1,53 +1,27 @@
-# FaceMesh Model
+# MediaPipe FaceMesh Model
 
-This directory is reserved for the MediaPipe FaceMesh TFLite model used by
-Member 2's native liveness engine.
-
-## Expected File
+Expected production artifact:
 
 ```text
 models/facemesh/face_landmark.tflite
 ```
 
-The expected model is MediaPipe Face Landmarker / FaceMesh landmark output with
-468 3D landmarks. The native parser expects at least `468 * 3` float values in
-the output tensor.
-
-## License Requirement
-
-Use the MediaPipe open-source release model and keep Apache 2.0 license
-attribution with the model artifact. Add the license or source note next to the
-model before committing the binary.
-
-Suggested files:
+Android also accepts:
 
 ```text
-models/facemesh/face_landmark.tflite
-models/facemesh/LICENSE
-models/facemesh/model_card.md
+/sdcard/Download/face_landmark.tflite
 ```
 
-## Native Loading Path
+The native `FaceMeshEngine` parses `468 * 3` float landmark output and computes
+EAR, MAR, yaw, pitch, and roll with OpenCV-free C++ math. When TensorFlow Lite
+C++ headers and libraries are linked, the engine creates a dedicated TFLite
+interpreter and attaches XNNPACK with two threads.
 
-The model is loaded through:
+License gate before committing a binary:
 
-```cpp
-landmarks::FaceMeshEngine::LoadModel(...)
-```
-
-and can also be initialized via:
-
-```cpp
-inference::TFLiteInterpreterManager::InitializeFaceMeshModel(...)
-```
-
-The implementation creates a dedicated TFLite interpreter for FaceMesh and caps
-its thread budget to `2`. When TensorFlow Lite headers/delegate support are
-present, the engine attaches the XNNPACK delegate with `num_threads = 2`.
-
-## Current Phase 1 Note
-
-The native math, parser, FSM, HostObject fields, and mock runner are complete.
-The model binary itself is not committed yet. Until the binary and live camera
-path are ready, use `RunFaceMeshLandmarks(...)` or `MockLivenessRunner.cpp` for
-testing.
+- Use an Apache-2.0 MediaPipe model release.
+- Add the upstream Apache-2.0 license file next to the model.
+- Record source URL, commit/tag, SHA-256, output tensor shape, and final size in
+  `model_card.md`.
+- Keep the `.tflite` file close to 3 MB so the full offline model bundle stays
+  below 20 MB.

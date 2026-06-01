@@ -116,6 +116,10 @@ void LivenessFSM::Reset(Clock::time_point now) {
   reason_.clear();
 }
 
+void LivenessFSM::ForcePass(const char* reason) {
+  Pass(reason == nullptr ? "verification pass forced" : reason);
+}
+
 LivenessSnapshot LivenessFSM::Snapshot() const {
   return {
       State(),

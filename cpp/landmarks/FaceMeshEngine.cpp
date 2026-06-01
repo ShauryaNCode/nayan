@@ -193,8 +193,16 @@ bool SolveLinear6(std::array<std::array<float, 6>, 6> a,
 
 HeadPose EulerFromRotation(const Mat3& rotation) {
   const float yaw = std::asin(std::clamp(-rotation[2][0], -1.0f, 1.0f));
-  const float pitch = std::atan2(rotation[2][1], rotation[2][2]);
+  float pitch = std::atan2(rotation[2][1], rotation[2][2]);
   const float roll = std::atan2(rotation[1][0], rotation[0][0]);
+
+  // Adjust pitch to compensate for the 180-degree model coordinate system offset
+  if (pitch < 0.0f) {
+    pitch += kPi;
+  } else {
+    pitch -= kPi;
+  }
+
   return {
       yaw * 180.0f / kPi,
       pitch * 180.0f / kPi,

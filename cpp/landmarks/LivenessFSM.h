@@ -64,6 +64,7 @@ class LivenessFSM {
                           std::chrono::steady_clock::now());
   void Reset(std::chrono::steady_clock::time_point now =
                  std::chrono::steady_clock::now());
+  void ForcePass(const char* reason = "verification pass forced");
 
   LivenessSnapshot Snapshot() const;
   bool RequiresVerification() const;
