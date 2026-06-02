@@ -95,6 +95,27 @@ jsi::Value JSIHostObject::get(jsi::Runtime& rt, const jsi::PropNameID& name) {
   if (propertyName == "roll") {
     return jsi::Value(static_cast<double>(result_->roll));
   }
+  if (propertyName == "inferenceMs") {
+    return jsi::Value(static_cast<double>(result_->inferenceMs));
+  }
+  if (propertyName == "ramMb") {
+    return jsi::Value(static_cast<double>(result_->ramMb));
+  }
+  if (propertyName == "fftHighFrequencyRatio") {
+    return jsi::Value(static_cast<double>(result_->fftHighFrequencyRatio));
+  }
+  if (propertyName == "fftMoireScore") {
+    return jsi::Value(static_cast<double>(result_->fftMoireScore));
+  }
+  if (propertyName == "passiveTextureOk") {
+    return jsi::Value(result_->passiveTextureOk);
+  }
+  if (propertyName == "passiveDepthOk") {
+    return jsi::Value(result_->passiveDepthOk);
+  }
+  if (propertyName == "passiveDepthRatio") {
+    return jsi::Value(static_cast<double>(result_->passiveDepthRatio));
+  }
   if (propertyName == "embedding") {
     return jsi::Value(rt, CreateEmbeddingTypedArray(rt));
   }
@@ -129,6 +150,13 @@ std::vector<jsi::PropNameID> JSIHostObject::getPropertyNames(jsi::Runtime& rt) {
   names.emplace_back(jsi::PropNameID::forAscii(rt, "yaw"));
   names.emplace_back(jsi::PropNameID::forAscii(rt, "pitch"));
   names.emplace_back(jsi::PropNameID::forAscii(rt, "roll"));
+  names.emplace_back(jsi::PropNameID::forAscii(rt, "inferenceMs"));
+  names.emplace_back(jsi::PropNameID::forAscii(rt, "ramMb"));
+  names.emplace_back(jsi::PropNameID::forAscii(rt, "fftHighFrequencyRatio"));
+  names.emplace_back(jsi::PropNameID::forAscii(rt, "fftMoireScore"));
+  names.emplace_back(jsi::PropNameID::forAscii(rt, "passiveTextureOk"));
+  names.emplace_back(jsi::PropNameID::forAscii(rt, "passiveDepthOk"));
+  names.emplace_back(jsi::PropNameID::forAscii(rt, "passiveDepthRatio"));
   names.emplace_back(jsi::PropNameID::forAscii(rt, "embedding"));
   names.emplace_back(jsi::PropNameID::forAscii(rt, "embeddingLength"));
   names.emplace_back(jsi::PropNameID::forAscii(rt, "embeddingByteLength"));

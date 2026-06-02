@@ -47,6 +47,13 @@ struct ProcessedFrameResult {
   float yaw{0.0f};
   float pitch{0.0f};
   float roll{0.0f};
+  float inferenceMs{0.0f};
+  float ramMb{0.0f};
+  float fftHighFrequencyRatio{0.0f};
+  float fftMoireScore{0.0f};
+  bool passiveTextureOk{true};
+  bool passiveDepthOk{true};
+  float passiveDepthRatio{0.0f};
   std::vector<float> embedding;
   float sharpnessScore{0.0f};
 };
@@ -58,7 +65,7 @@ class FrameProcessorPlugin {
   FrameProcessorPlugin(const FrameProcessorPlugin&) = delete;
   FrameProcessorPlugin& operator=(const FrameProcessorPlugin&) = delete;
   bool EnqueueGrayFrame(const uint8_t* source, uint32_t width, uint32_t height, uint32_t stride, uint64_t timestampNs);
-  bool SubmitExternalModelResult(const float* landmarkValues, std::size_t landmarkValueCount, const float* embeddingValues, std::size_t embeddingValueCount, uint32_t width, uint32_t height, uint64_t timestampNs);
+  bool SubmitExternalModelResult(const float* landmarkValues, std::size_t landmarkValueCount, const float* embeddingValues, std::size_t embeddingValueCount, uint32_t width, uint32_t height, uint64_t timestampNs, float externalInferenceMs = 0.0f);
 #if defined(__APPLE__)
   bool EnqueueAppleLumaPlane(const void* pixelBufferRef, uint32_t width, uint32_t height, uint32_t stride, uint64_t timestampNs);
 #endif
@@ -66,11 +73,13 @@ class FrameProcessorPlugin {
   void SetInferenceCallback(std::function<void(const ProcessedFrameResult&)> callback);
   void SetLivenessState(NativeLivenessState state);
   void SetLivenessChallenge(NativeLivenessChallenge challenge);
+  NativeLivenessState GetLivenessState() const;
+  NativeLivenessChallenge GetLivenessChallenge() const;
  private:
   bool SubmitFrameCopy(const uint8_t* source, uint32_t width, uint32_t height, uint32_t stride, uint64_t timestampNs, PixelFormat format);
   void InferenceLoop();
   void ProcessCurrentFrame(FrameBuffer* frame);
-  NativeLivenessState GetLivenessState() const;
+
   static NativeLivenessState ToNativeState(offlineface::landmarks::LivenessState state);
   static offlineface::landmarks::LivenessChallenge ToFSMChallenge(NativeLivenessChallenge challenge);
   bool ShouldRunMobileFaceNet() const;
@@ -87,7 +96,7 @@ class FrameProcessorPlugin {
   std::thread inferenceThread_;
   std::mutex resultMutex_;
   std::mutex callbackMutex_;
-  std::mutex fsmMutex_;
+  mutable std::mutex fsmMutex_;
   offlineface::landmarks::LivenessFSM livenessFsm_;
   ProcessedFrameResult latestResult_{};
   std::function<void(const ProcessedFrameResult&)> callback_;

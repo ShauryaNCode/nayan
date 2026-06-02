@@ -1,5 +1,6 @@
 #include "FrameProcessorPlugin.h"
 
+#include <algorithm>
 #include <chrono>
 #include <cstring>
 #include <stdexcept>
@@ -8,8 +9,14 @@
 #if defined(__APPLE__)
 #include <CoreVideo/CoreVideo.h>
 #endif
+#if defined(__ANDROID__)
+#include <malloc.h>
+#endif
 
 #include "../clahe/CLAHEEngine.h"
+#include "../clahe/ColorSpaceConverter.h"
+#include "../antispoof/DepthCueChecker.h"
+#include "../antispoof/FFTTextureAnalyzer.h"
 #include "../common/MathUtils.h"
 #include "../inference/EmbeddingAverager.h"
 #include "../inference/TFLiteInterpreterManager.h"
@@ -18,6 +25,18 @@ namespace offlineface::frameprocessor {
 namespace {
 using namespace std::chrono_literals;
 using Clock = std::chrono::steady_clock;
+
+float CurrentHeapUsageMb() {
+#if defined(__ANDROID__) && __ANDROID_API__ >= 31
+  const struct mallinfo2 info = mallinfo2();
+  return static_cast<float>(info.uordblks) / (1024.0f * 1024.0f);
+#elif defined(__ANDROID__)
+  const struct mallinfo info = mallinfo();
+  return static_cast<float>(info.uordblks) / (1024.0f * 1024.0f);
+#else
+  return 0.0f;
+#endif
+}
 }
 
 FrameProcessorPlugin::FrameProcessorPlugin(
@@ -74,7 +93,8 @@ bool FrameProcessorPlugin::SubmitExternalModelResult(
     std::size_t embeddingValueCount,
     uint32_t width,
     uint32_t height,
-    uint64_t timestampNs) {
+    uint64_t timestampNs,
+    float externalInferenceMs) {
   if (landmarkValues == nullptr || landmarkValueCount < 468U * 3U ||
       width == 0U || height == 0U) {
     return false;
@@ -82,6 +102,11 @@ bool FrameProcessorPlugin::SubmitExternalModelResult(
 
   const auto faceMeshResult = interpreterManager_->RunFaceMeshLandmarks(
       landmarkValues, landmarkValueCount, width, height);
+  const auto depthCueResult = antispoof::CheckDepthCueFromLandmarks(
+      landmarkValues, landmarkValueCount, width, height);
+  const bool passiveDepthOk = !depthCueResult.faceDetected ||
+                              !depthCueResult.spoofDetected;
+  const auto startedAt = Clock::now();
 
   offlineface::landmarks::FaceMetrics metrics{};
   metrics.faceDetected = faceMeshResult.faceDetected;
@@ -94,7 +119,8 @@ bool FrameProcessorPlugin::SubmitExternalModelResult(
   offlineface::landmarks::LivenessSnapshot livenessSnapshot{};
   {
     std::lock_guard<std::mutex> lock(fsmMutex_);
-    livenessSnapshot = livenessFsm_.Update({metrics, Clock::now(), true, true});
+    livenessSnapshot =
+        livenessFsm_.Update({metrics, Clock::now(), true, passiveDepthOk});
   }
   livenessState_.store(
       static_cast<int>(ToNativeState(livenessSnapshot.state)),
@@ -102,7 +128,7 @@ bool FrameProcessorPlugin::SubmitExternalModelResult(
 
   const bool canUseEmbedding =
       embeddingValues != nullptr && embeddingValueCount == 128U &&
-      faceMeshResult.faceDetected && ShouldRunMobileFaceNet();
+      faceMeshResult.faceDetected;
 
   std::vector<float> embedding;
   if (canUseEmbedding) {
@@ -132,6 +158,13 @@ bool FrameProcessorPlugin::SubmitExternalModelResult(
   nextResult.yaw = faceMeshResult.yawDegrees;
   nextResult.pitch = faceMeshResult.pitchDegrees;
   nextResult.roll = faceMeshResult.rollDegrees;
+  nextResult.inferenceMs =
+      std::max(0.0f, externalInferenceMs) +
+      std::chrono::duration<float, std::milli>(Clock::now() - startedAt).count();
+  nextResult.ramMb = CurrentHeapUsageMb();
+  nextResult.passiveTextureOk = true;
+  nextResult.passiveDepthOk = passiveDepthOk;
+  nextResult.passiveDepthRatio = depthCueResult.faceBoxToEyeRatio;
   nextResult.embedding = canUseEmbedding
                              ? embeddingAverager_->PushEmbedding(timestampNs, embedding)
                              : std::vector<float>{};
@@ -287,13 +320,37 @@ void FrameProcessorPlugin::ProcessCurrentFrame(FrameBuffer* frame) {
   const uint32_t height = frame->height;
   const uint32_t stride = frame->stride;
   const uint64_t timestampNs = frame->timestampNs;
+  const auto startedAt = Clock::now();
 
+  const std::size_t pixelCount =
+      static_cast<std::size_t>(width) * static_cast<std::size_t>(height);
+  std::vector<uint8_t> rgb(pixelCount * 3U, 0U);
+  std::vector<float> lab(pixelCount * 3U, 0.0f);
+  std::vector<uint8_t> lChannel(pixelCount, 0U);
+  std::vector<uint8_t> enhancedL(pixelCount, 0U);
+  std::vector<uint8_t> enhancedRgb(pixelCount * 3U, 0U);
   std::vector<uint8_t> enhanced(
       static_cast<std::size_t>(width) * static_cast<std::size_t>(height), 0U);
-  claheEngine_->Apply(frame->data, width, height, stride, enhanced.data());
+  offlineface::clahe::GrayToRgb(
+      frame->data, width, height, stride, rgb.data());
+  offlineface::clahe::RgbToLab(rgb.data(), width, height, lab.data());
+  offlineface::clahe::ExtractLChannel(lab.data(), width, height, lChannel.data());
+  claheEngine_->Apply(lChannel.data(), width, height, width, enhancedL.data());
+  offlineface::clahe::ReplaceLChannel(
+      enhancedL.data(), width, height, lab.data());
+  offlineface::clahe::LabToRgb(lab.data(), width, height, enhancedRgb.data());
+  offlineface::clahe::RgbToGray(enhancedRgb.data(), width, height, enhanced.data());
 
   const auto faceMeshResult =
       interpreterManager_->RunFaceMesh(enhanced.data(), width, height, width);
+  const auto depthCueResult = antispoof::DepthCueResult{};
+  const auto fftResult = faceMeshResult.faceDetected
+                             ? ::antispoof::AnalyzeFaceCropFixed(
+                                   enhanced.data(),
+                                   static_cast<int>(width),
+                                   static_cast<int>(height),
+                                   static_cast<int>(width))
+                             : ::antispoof::FFTTextureResult{};
   offlineface::landmarks::FaceMetrics metrics{};
   metrics.faceDetected = faceMeshResult.faceDetected;
   metrics.ear = faceMeshResult.eyeAspectRatio;
@@ -306,7 +363,7 @@ void FrameProcessorPlugin::ProcessCurrentFrame(FrameBuffer* frame) {
   {
     std::lock_guard<std::mutex> lock(fsmMutex_);
     livenessSnapshot = livenessFsm_.Update(
-        {metrics, Clock::now(), true, true});
+        {metrics, Clock::now(), !fftResult.spoofDetected, !depthCueResult.spoofDetected});
   }
   livenessState_.store(
       static_cast<int>(ToNativeState(livenessSnapshot.state)),
@@ -344,6 +401,16 @@ void FrameProcessorPlugin::ProcessCurrentFrame(FrameBuffer* frame) {
   nextResult.yaw = faceMeshResult.yawDegrees;
   nextResult.pitch = faceMeshResult.pitchDegrees;
   nextResult.roll = faceMeshResult.rollDegrees;
+  nextResult.inferenceMs =
+      std::chrono::duration<float, std::milli>(Clock::now() - startedAt).count();
+  nextResult.ramMb = CurrentHeapUsageMb();
+  nextResult.fftHighFrequencyRatio =
+      static_cast<float>(fftResult.highFrequencyRatioQ10) / 1024.0f;
+  nextResult.fftMoireScore =
+      static_cast<float>(fftResult.moireScoreQ10) / 1024.0f;
+  nextResult.passiveTextureOk = !fftResult.spoofDetected;
+  nextResult.passiveDepthOk = !depthCueResult.spoofDetected;
+  nextResult.passiveDepthRatio = depthCueResult.faceBoxToEyeRatio;
   nextResult.embedding = runMobileFaceNet
                              ? embeddingAverager_->PushEmbedding(timestampNs, embedding)
                              : std::vector<float>{};
@@ -370,6 +437,12 @@ void FrameProcessorPlugin::ProcessCurrentFrame(FrameBuffer* frame) {
 NativeLivenessState FrameProcessorPlugin::GetLivenessState() const {
   return static_cast<NativeLivenessState>(
       livenessState_.load(std::memory_order_acquire));
+}
+
+NativeLivenessChallenge FrameProcessorPlugin::GetLivenessChallenge() const {
+  std::lock_guard<std::mutex> lock(fsmMutex_);
+  return static_cast<NativeLivenessChallenge>(
+      static_cast<int>(livenessFsm_.Challenge()));
 }
 
 bool FrameProcessorPlugin::ShouldRunMobileFaceNet() const {

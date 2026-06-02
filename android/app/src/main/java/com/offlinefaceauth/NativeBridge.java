@@ -9,6 +9,7 @@ import com.facebook.react.ReactInstanceManager;
 import com.facebook.react.bridge.Promise;
 import com.facebook.react.bridge.Arguments;
 import com.facebook.react.bridge.ReactApplicationContext;
+import com.facebook.react.bridge.ReactContext;
 import com.facebook.react.bridge.ReactContextBaseJavaModule;
 import com.facebook.react.bridge.ReactMethod;
 import com.facebook.react.bridge.WritableMap;
@@ -83,7 +84,8 @@ public final class NativeBridge extends ReactContextBaseJavaModule {
       float[] embeddingValues,
       int width,
       int height,
-      long timestampNs);
+      long timestampNs,
+      float inferenceMs);
 
   public static native void nativeSetLivenessState(int state);
 
@@ -319,10 +321,7 @@ public final class NativeBridge extends ReactContextBaseJavaModule {
 
     final ReactApplicationContext reactContext = getReactApplicationContext();
     if (reactContext.hasActiveReactInstance()) {
-      final long runtimePointer = reactContext.getJavaScriptContextHolder().get();
-      if (runtimePointer != 0L && IS_JSI_INSTALLED.compareAndSet(false, true)) {
-        nativeInstallJSI(runtimePointer);
-      }
+      scheduleJsiInstall(reactContext);
       return;
     }
 
@@ -338,15 +337,31 @@ public final class NativeBridge extends ReactContextBaseJavaModule {
     final ReactInstanceEventListener[] listenerHolder = new ReactInstanceEventListener[1];
     listenerHolder[0] =
         context -> {
-          final long runtimePointer = context.getJavaScriptContextHolder().get();
-          if (runtimePointer != 0L && IS_JSI_INSTALLED.compareAndSet(false, true)) {
-            nativeInstallJSI(runtimePointer);
-          }
+          scheduleJsiInstall(context);
           reactInstanceManager.removeReactInstanceEventListener(listenerHolder[0]);
           reactInstanceListenerRegistered.set(false);
         };
 
     reactInstanceManager.addReactInstanceEventListener(listenerHolder[0]);
+  }
+
+  private static void scheduleJsiInstall(ReactContext reactContext) {
+    reactContext.runOnJSQueueThread(
+        () -> {
+          final long runtimePointer = reactContext.getJavaScriptContextHolder().get();
+          if (runtimePointer == 0L) {
+            return;
+          }
+          if (!IS_JSI_INSTALLED.compareAndSet(false, true)) {
+            return;
+          }
+          try {
+            nativeInstallJSI(runtimePointer);
+          } catch (Throwable throwable) {
+            IS_JSI_INSTALLED.set(false);
+            throw throwable;
+          }
+        });
   }
 
   private String resolveModelPath(
@@ -411,22 +426,28 @@ public final class NativeBridge extends ReactContextBaseJavaModule {
     }
 
     final Image image = frame.getImage();
-    if (image == null || image.getPlanes().length == 0) {
-      return false;
-    }
+    try {
+      if (image == null || image.getPlanes().length == 0) {
+        return false;
+      }
 
-    final Image.Plane yPlane = image.getPlanes()[0];
-    final ByteBuffer yBuffer = yPlane.getBuffer();
-    if (yBuffer == null || !yBuffer.isDirect()) {
-      return false;
-    }
+      final Image.Plane yPlane = image.getPlanes()[0];
+      final ByteBuffer yBuffer = yPlane.getBuffer();
+      if (yBuffer == null || !yBuffer.isDirect()) {
+        return false;
+      }
 
-    return nativeEnqueueFrame(
-        yBuffer,
-        image.getWidth(),
-        image.getHeight(),
-        yPlane.getRowStride(),
-        image.getTimestamp());
+      return nativeEnqueueFrame(
+          yBuffer,
+          image.getWidth(),
+          image.getHeight(),
+          yPlane.getRowStride(),
+          image.getTimestamp());
+    } finally {
+      if (image != null) {
+        image.close();
+      }
+    }
   }
 
   static boolean processVisionCameraFrame(Frame frame) {
@@ -435,10 +456,7 @@ public final class NativeBridge extends ReactContextBaseJavaModule {
     }
 
     if (TFLiteFrameProcessorRunner.isReady()) {
-      final boolean processed = TFLiteFrameProcessorRunner.process(frame);
-      if (processed) {
-        return true;
-      }
+      return TFLiteFrameProcessorRunner.process(frame);
     }
 
     return enqueueVisionCameraFrame(frame);

@@ -1,10 +1,10 @@
 import type {
   DB,
-  QueryResult,
 } from '@op-engineering/op-sqlite';
 
 import {initialSchemaMigration} from './001_initial_schema';
 import {personEmbeddingCryptoMigration} from './002_person_embedding_crypto';
+import {executeSql, getRows} from '../SQLiteCompat';
 
 export interface Migration {
   version: number;
@@ -36,16 +36,11 @@ const CREATE_MIGRATIONS_TABLE_SQL = `
   );
 `;
 
-function getRows(result: QueryResult): Array<Record<string, unknown>> {
-  return Array.isArray(result.rows)
-    ? (result.rows as Array<Record<string, unknown>>)
-    : [];
-}
-
 export function getAppliedMigrationVersions(db: DB): Set<number> {
-  db.executeSync(CREATE_MIGRATIONS_TABLE_SQL);
+  executeSql(db, CREATE_MIGRATIONS_TABLE_SQL);
 
-  const result = db.executeSync(
+  const result = executeSql(
+    db,
     'SELECT version FROM schema_migrations ORDER BY version ASC;',
   );
 
@@ -74,23 +69,24 @@ export function runMigrations(
     const appliedAt = new Date().toISOString();
 
     try {
-      db.executeSync('BEGIN IMMEDIATE;');
+      executeSql(db, 'BEGIN IMMEDIATE;');
 
       for (const statement of migration.statements) {
         const sql = statement.trim();
         if (sql.length > 0) {
-          db.executeSync(sql);
+          executeSql(db, sql);
         }
       }
 
-      db.executeSync(
+      executeSql(
+        db,
         `
           INSERT INTO schema_migrations (version, name, applied_at)
           VALUES (?, ?, ?);
         `,
         [migration.version, migration.name, appliedAt],
       );
-      db.executeSync('COMMIT;');
+      executeSql(db, 'COMMIT;');
 
       applied.push({
         version: migration.version,
@@ -99,7 +95,7 @@ export function runMigrations(
       });
     } catch (error) {
       try {
-        db.executeSync('ROLLBACK;');
+        executeSql(db, 'ROLLBACK;');
       } catch (_) {
         // Ignore rollback errors; the original migration failure is clearer.
       }

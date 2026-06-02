@@ -60,9 +60,7 @@ type NativeBridgeModule = {
   setLivenessChallenge?: (challenge: string) => Promise<void>;
 };
 
-declare global {
-  var __offlineFaceAuth: OfflineFaceAuthGlobal | undefined;
-}
+type NativeChallenge = 'NONE' | 'BLINK' | 'SMILE' | 'TURN_LEFT' | 'TURN_RIGHT';
 
 const MODEL_PATH = '/sdcard/Download/mobilefacenet.tflite';
 
@@ -104,6 +102,26 @@ const styles = StyleSheet.create({
   passButton: {
     backgroundColor: '#7c3aed',
   },
+  challengeGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    marginBottom: 16,
+  },
+  challengeButton: {
+    flexGrow: 1,
+    flexBasis: '48%',
+    backgroundColor: '#334155',
+    borderRadius: 12,
+    paddingVertical: 12,
+    paddingHorizontal: 10,
+    alignItems: 'center',
+  },
+  challengeButtonText: {
+    color: '#f8fafc',
+    fontSize: 13,
+    fontWeight: '800',
+  },
   disabledButton: {
     opacity: 0.6,
   },
@@ -131,13 +149,34 @@ const nativeBridge = NativeModules.NativeBridge as
   | NativeBridgeModule
   | undefined;
 
+const EMBEDDING_FLOAT_COUNT = 128;
+
 function readGlobalEngine(): OfflineFaceAuthGlobal | undefined {
-  return globalThis.__offlineFaceAuth;
+  return (globalThis as {__offlineFaceAuth?: OfflineFaceAuthGlobal})
+    .__offlineFaceAuth;
+}
+
+function readEmbedding(result: OfflineFaceAuthResult): Float32Array {
+  return result.embedding instanceof Float32Array
+    ? result.embedding
+    : new Float32Array();
+}
+
+function isUsableEmbedding(result: OfflineFaceAuthResult): boolean {
+  const embedding = readEmbedding(result);
+  return (
+    result.accepted === true &&
+    result.faceDetected === true &&
+    embedding.length === EMBEDDING_FLOAT_COUNT
+  );
 }
 
 function formatResult(result: OfflineFaceAuthResult): string {
-  const embeddingArray = Array.from(result.embedding ?? []);
-  const preview = embeddingArray.slice(0, 16).map((value) => value.toFixed(6));
+  const embedding = readEmbedding(result);
+  const embeddingArray = Array.from(embedding);
+  const preview = isUsableEmbedding(result)
+    ? embeddingArray.slice(0, 16).map((value) => value.toFixed(6))
+    : [];
   return JSON.stringify(
     {
       accepted: result.accepted,
@@ -157,7 +196,10 @@ function formatResult(result: OfflineFaceAuthResult): string {
       yaw: result.yaw,
       pitch: result.pitch,
       roll: result.roll,
+      usableEmbedding: isUsableEmbedding(result),
       embeddingLength: embeddingArray.length,
+      nativeEmbeddingLength: result.embeddingLength,
+      nativeEmbeddingByteLength: result.embeddingByteLength,
       embeddingPreview: preview,
     },
     null,
@@ -288,7 +330,7 @@ export default function App(): React.JSX.Element {
       const result = status.engine.getLatestResult();
       const isTypedArrayReadable =
         result.embedding instanceof Float32Array &&
-        result.embedding.length >= 0;
+        result.embedding.length === EMBEDDING_FLOAT_COUNT;
 
       setConsoleOutput(
         `${formatResult(result)}\nFloat32Array readable: ${String(
@@ -339,6 +381,29 @@ export default function App(): React.JSX.Element {
     }
   }, [refreshStatus]);
 
+  const handleChallenge = useCallback(
+    async (challenge: NativeChallenge) => {
+      try {
+        if (nativeBridge?.setLivenessChallenge == null) {
+          throw new Error('NativeBridge.setLivenessChallenge is unavailable');
+        }
+
+        await nativeBridge.setLivenessChallenge(challenge);
+        setConsoleOutput(
+          challenge === 'NONE'
+            ? 'Liveness FSM reset. Center your face in the camera.'
+            : `Started ${challenge} challenge. Watch the camera overlay for live state.`,
+        );
+        refreshStatus();
+      } catch (error) {
+        const message =
+          error instanceof Error ? error.stack ?? error.message : String(error);
+        setConsoleOutput(`Challenge failure:\n${message}`);
+      }
+    },
+    [refreshStatus],
+  );
+
   const summary = useMemo(
     () => [
       {label: 'Engine Presence', value: enginePresent ? 'Injected' : 'Missing'},
@@ -383,9 +448,35 @@ export default function App(): React.JSX.Element {
           <CameraView
             key={frameProcessorPluginReady ? 'processor-ready' : 'processor-waiting'}
             isActive={frameProcessorPluginReady}
-            ringState={previewReady ? 'detected' : 'idle'}
             onPreviewReady={() => setPreviewReady(true)}
           />
+        </View>
+
+        <View style={styles.challengeGrid}>
+          <TouchableOpacity
+            style={styles.challengeButton}
+            onPress={() => handleChallenge('BLINK')}
+          >
+            <Text style={styles.challengeButtonText}>Start Blink</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={styles.challengeButton}
+            onPress={() => handleChallenge('TURN_LEFT')}
+          >
+            <Text style={styles.challengeButtonText}>Start Turn Left</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={styles.challengeButton}
+            onPress={() => handleChallenge('TURN_RIGHT')}
+          >
+            <Text style={styles.challengeButtonText}>Start Turn Right</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={styles.challengeButton}
+            onPress={() => handleChallenge('NONE')}
+          >
+            <Text style={styles.challengeButtonText}>Reset Liveness</Text>
+          </TouchableOpacity>
         </View>
 
         <TouchableOpacity style={styles.button} onPress={handleLoopback}>
