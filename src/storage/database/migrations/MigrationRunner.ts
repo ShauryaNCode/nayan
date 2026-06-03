@@ -5,6 +5,7 @@ import type {
 
 import {initialSchemaMigration} from './001_initial_schema';
 import {personEmbeddingCryptoMigration} from './002_person_embedding_crypto';
+import {syncQueueMigration} from './003_sync_queue';
 
 export interface Migration {
   version: number;
@@ -26,6 +27,7 @@ export interface MigrationRunnerResult {
 export const migrations: Migration[] = [
   initialSchemaMigration,
   personEmbeddingCryptoMigration,
+  syncQueueMigration,
 ];
 
 const CREATE_MIGRATIONS_TABLE_SQL = `

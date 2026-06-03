@@ -2,61 +2,48 @@
  * PurgeManager.ts
  * Path: src/sync/purge/PurgeManager.ts
  *
- * Phase 2 scope:
- *   Removes DONE items from the in-memory queue after a successful
+ * Phase 3 (Day 6) scope:
+ *   Removes DONE items from the sync_queue table after a successful
  *   S3 upload.
  *
  * Retention rules:
- *   DONE       → purged (removed from backing store).
+ *   DONE       → purged (deleted from sync_queue).
  *   FAILED     → retained (will be retried by SyncWorker).
  *   PROCESSING → retained (upload is in-flight).
  *   PENDING    → retained (not yet attempted).
  *
- * SQLCipher-backed purge, WAL compaction, and ledger-level tombstones
- * are Phase 3 concerns.
+ * WAL compaction and ledger-level tombstones are future concerns.
  */
 
-import { _inMemoryQueue } from '../queue/OfflineQueueReader';
+import { getDatabase } from '../../storage/database/DatabaseManager';
 
 // ---------------------------------------------------------------------------
 // Purge API
 // ---------------------------------------------------------------------------
 
 /**
- * Removes all DONE items from the in-memory queue.
+ * Removes all DONE items from the sync_queue table.
  *
  * Items with status FAILED, PROCESSING, or PENDING are left untouched.
  *
  * @returns The number of items that were purged.
  */
 export const purgeCompletedItems = (): number => {
-  // Identify indices of DONE items (iterate in reverse so splice is safe).
-  const doneIndices: number[] = [];
+  const db = getDatabase();
 
-  for (let i = 0; i < _inMemoryQueue.length; i++) {
-    if (_inMemoryQueue[i].status === 'DONE') {
-      doneIndices.push(i);
-    }
-  }
+  const result = db.executeSync(
+    `DELETE FROM sync_queue WHERE status = 'DONE';`,
+  );
 
-  if (doneIndices.length === 0) {
+  const purged = result.rowsAffected ?? 0;
+
+  if (purged === 0) {
     console.log('[PurgeManager] purgeCompletedItems: nothing to purge.');
-    return 0;
-  }
-
-  // Remove in reverse order so earlier indices stay valid.
-  for (let j = doneIndices.length - 1; j >= 0; j--) {
-    const idx = doneIndices[j];
-    const removed = _inMemoryQueue.splice(idx, 1)[0];
+  } else {
     console.log(
-      `[PurgeManager] purgeCompletedItems: removed item "${removed.id}" (DONE).`,
+      `[PurgeManager] purgeCompletedItems: purged ${purged} item(s).`,
     );
   }
 
-  console.log(
-    `[PurgeManager] purgeCompletedItems: purged ${doneIndices.length} item(s). ` +
-      `Remaining queue length: ${_inMemoryQueue.length}.`,
-  );
-
-  return doneIndices.length;
+  return purged;
 };

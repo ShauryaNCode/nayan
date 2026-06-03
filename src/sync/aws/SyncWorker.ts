@@ -2,30 +2,40 @@
  * SyncWorker.ts
  * Path: src/sync/aws/SyncWorker.ts
  *
- * Phase 2 scope:
- *   Drives the upload loop for the in-memory offline queue.
+ * Phase 2 scope (preserved):
+ *   Drives the upload loop for the offline queue.
  *
  *   processQueue():
  *     1. Reads the next PENDING item via OfflineQueueReader.readNext().
  *     2. Attempts upload via S3Uploader.uploadToS3().
- *     3. On success  → marks item status = DONE.
- *     4. On failure  → marks item status = FAILED.
+ *     3. On success  → marks item status = DONE via SQL.
+ *     4. On failure  → marks item status = FAILED via SQL.
  *        Re-enqueues as PENDING and waits BackoffEngine.getDelay(attempt)
  *        before the next attempt.  Maximum 5 attempts per item.
  *     5. Continues until no PENDING items remain.
  *
- * Constraints (Phase 2):
+ * Phase 3 (Day 6) changes:
+ *   - Status transitions now use updateStatus() / incrementAttempts()
+ *     which write through to the SQLCipher sync_queue table.
+ *   - Local attempt counter tracks retry state within the loop.
+ *
+ * Constraints:
  *   - No background services.
  *   - No WorkManager / Headless JS.
  *   - No conflict resolution (ConflictResolver is Phase 3).
  *   - No multipart uploads.
  *
  * Background workers, multipart uploads, and conflict resolution
- * are Phase 3 concerns.
+ * are future concerns.
  */
 
 import { getDelay } from '../connectivity/BackoffEngine';
-import { readNext, QueueItem } from '../queue/OfflineQueueReader';
+import {
+  readNext,
+  updateStatus,
+  incrementAttempts,
+  QueueItem,
+} from '../queue/OfflineQueueReader';
 import { uploadToS3 } from './S3Uploader';
 
 // ---------------------------------------------------------------------------
@@ -50,64 +60,76 @@ const sleep = (ms: number): Promise<void> =>
  * Attempts to upload a single item, retrying on failure with exponential
  * backoff, up to MAX_RETRIES attempts total.
  *
- * Status transitions:
+ * Status transitions (via SQLCipher):
  *   PROCESSING → DONE    (success on any attempt)
  *   PROCESSING → FAILED  (all attempts exhausted)
  *
- * The item's `attempts` counter is already incremented by readNext().
- * Additional retry attempts increment it here manually so the backoff
- * delay reflects the true attempt number.
+ * The item's `attempts` counter was already incremented by readNext().
+ * A local counter tracks the attempt number within this loop, and
+ * incrementAttempts() writes back to the DB on each retry.
  *
  * @param item - The QueueItem currently in PROCESSING state.
+ * @returns The final status of the item after all attempts.
  */
-const uploadWithRetry = async (item: QueueItem): Promise<void> => {
-  // item.attempts was incremented to 1 by readNext() for the first attempt.
-  while (item.attempts <= MAX_RETRIES) {
+const uploadWithRetry = async (item: QueueItem): Promise<'DONE' | 'FAILED'> => {
+  // Local attempt counter, initialised from the DB value set by readNext().
+  let currentAttempt = item.attempts;
+
+  while (currentAttempt <= MAX_RETRIES) {
     console.log(
       `[SyncWorker] uploadWithRetry: item "${item.id}" ` +
-        `attempt ${item.attempts}/${MAX_RETRIES}.`,
+        `attempt ${currentAttempt}/${MAX_RETRIES}.`,
     );
 
     const result = await uploadToS3(item);
 
     if (result.success) {
-      item.status = 'DONE';
+      updateStatus(item.id, 'DONE');
       console.log(
         `[SyncWorker] uploadWithRetry: item "${item.id}" → DONE ` +
           `(ETag=${result.eTag}).`,
       );
-      return;
+      return 'DONE';
     }
 
     // Upload failed.
     console.warn(
       `[SyncWorker] uploadWithRetry: item "${item.id}" attempt ` +
-        `${item.attempts} failed. Error: ${result.error}`,
+        `${currentAttempt} failed. Error: ${result.error}`,
     );
 
-    if (item.attempts >= MAX_RETRIES) {
+    if (currentAttempt >= MAX_RETRIES) {
       // All retries exhausted – give up.
-      item.status = 'FAILED';
+      updateStatus(item.id, 'FAILED');
       console.error(
         `[SyncWorker] uploadWithRetry: item "${item.id}" → FAILED ` +
           `after ${MAX_RETRIES} attempts.`,
       );
-      return;
+      return 'FAILED';
     }
 
     // Calculate backoff delay for next attempt.
-    const delayMs = getDelay(item.attempts);
+    const delayMs = getDelay(currentAttempt);
     console.log(
       `[SyncWorker] uploadWithRetry: waiting ${delayMs} ms before retry ` +
-        `(attempt ${item.attempts + 1}).`,
+        `(attempt ${currentAttempt + 1}).`,
     );
 
     await sleep(delayMs);
 
-    // Increment attempt counter and re-mark as PROCESSING for the next round.
-    item.attempts += 1;
-    item.status = 'PROCESSING';
+    // Increment attempt counter in DB and update local tracker.
+    currentAttempt = incrementAttempts(item.id);
+    if (currentAttempt < 0) {
+      // Item was not found in DB – bail.
+      console.error(
+        `[SyncWorker] uploadWithRetry: item "${item.id}" disappeared from DB.`,
+      );
+      return 'FAILED';
+    }
   }
+
+  // Should not be reached, but guard against it.
+  return 'FAILED';
 };
 
 // ---------------------------------------------------------------------------
@@ -118,9 +140,9 @@ const uploadWithRetry = async (item: QueueItem): Promise<void> => {
  * Processes all PENDING items in the offline queue sequentially.
  *
  * For each item:
- *   1. Reads it via readNext() (which marks it PROCESSING).
+ *   1. Reads it via readNext() (which marks it PROCESSING in SQLCipher).
  *   2. Calls uploadWithRetry() to attempt the S3 upload with backoff.
- *   3. The item ends as either DONE or FAILED.
+ *   3. The item ends as either DONE or FAILED (persisted in SQLCipher).
  *
  * The loop terminates when readNext() returns null (no more PENDING items).
  *
@@ -147,9 +169,9 @@ export const processQueue = async (): Promise<{
   while ((item = readNext()) !== null) {
     processed += 1;
 
-    await uploadWithRetry(item);
+    const finalStatus = await uploadWithRetry(item);
 
-    if (item.status === 'DONE') {
+    if (finalStatus === 'DONE') {
       succeeded += 1;
     } else {
       failed += 1;

@@ -2,19 +2,18 @@
  * OfflineQueue.ts
  * Path: src/sync/queue/OfflineQueue.ts
  *
- * In-memory offline queue with write helpers.
+ * SQLCipher-backed offline queue with write helpers.
  *
- * Phase 2 scope:
- *   - addItem()    : enqueue a new PENDING item.
- *   - getAllItems() : return a snapshot of the entire queue.
+ * Phase 3 (Day 6) scope:
+ *   - addItem()    : INSERT a new PENDING row into sync_queue.
+ *   - getAllItems() : SELECT all rows from sync_queue.
  *
- * The backing store (_inMemoryQueue) lives in OfflineQueueReader so that
- * both the reader and this writer share the same array reference.
- *
- * SQLCipher persistence, WAL strategy, and encryption are Phase 3 concerns.
+ * The backing store is the sync_queue table in the encrypted
+ * SQLCipher database (migration v3).
  */
 
-import { _inMemoryQueue, QueueItem, QueueItemStatus } from './OfflineQueueReader';
+import { getDatabase } from '../../storage/database/DatabaseManager';
+import { QueueItem, QueueItemStatus } from './OfflineQueueReader';
 
 // Re-export types so callers only need one import path.
 export type { QueueItem, QueueItemStatus };
@@ -33,26 +32,47 @@ const generateId = (): string => {
   return `item-${ts}-${rand}`;
 };
 
+/**
+ * Extracts rows from a QueryResult as an array of keyed objects.
+ */
+function getRows(
+  result: { rows?: unknown },
+): Array<Record<string, unknown>> {
+  if (Array.isArray((result as any).rows)) {
+    return (result as any).rows as Array<Record<string, unknown>>;
+  }
+  return [];
+}
+
 // ---------------------------------------------------------------------------
 // Queue write API
 // ---------------------------------------------------------------------------
 
 /**
- * Enqueues a new item with status PENDING.
+ * Enqueues a new item with status PENDING into the sync_queue table.
  *
  * @param payload - The data record to be synced to S3.
- * @returns The newly created QueueItem (already pushed into the backing store).
+ * @returns The newly created QueueItem.
  */
 export const addItem = (payload: Record<string, unknown>): QueueItem => {
+  const db = getDatabase();
+  const id = generateId();
+  const now = new Date().toISOString();
+  const payloadJson = JSON.stringify(payload);
+
+  db.executeSync(
+    `INSERT INTO sync_queue (queue_id, payload_json, status, attempts, created_at, updated_at)
+     VALUES (?, ?, 'PENDING', 0, ?, ?);`,
+    [id, payloadJson, now, now],
+  );
+
   const item: QueueItem = {
-    id: generateId(),
+    id,
     payload,
-    enqueuedAt: new Date().toISOString(),
+    enqueuedAt: now,
     status: 'PENDING',
     attempts: 0,
   };
-
-  _inMemoryQueue.push(item);
 
   console.log(
     `[OfflineQueue] addItem: enqueued item "${item.id}" at ${item.enqueuedAt}.`,
@@ -66,15 +86,37 @@ export const addItem = (payload: Record<string, unknown>): QueueItem => {
 // ---------------------------------------------------------------------------
 
 /**
- * Returns a shallow snapshot of all items currently in the queue,
- * regardless of their status.
+ * Returns all items currently in the sync_queue table,
+ * regardless of their status, ordered by creation time.
  *
- * The returned array is a copy of the references – mutating the outer array
- * will not affect the backing store, but mutating individual item objects
- * will (intentional, mirrors the PROCESSING-state pattern used by the reader).
- *
- * @returns Snapshot array of all QueueItems.
+ * @returns Array of all QueueItems.
  */
 export const getAllItems = (): QueueItem[] => {
-  return [..._inMemoryQueue];
+  const db = getDatabase();
+
+  const result = db.executeSync(
+    `SELECT queue_id, payload_json, status, attempts, created_at, updated_at
+     FROM sync_queue
+     ORDER BY created_at ASC;`,
+  );
+
+  const rows = getRows(result);
+
+  return rows.map((row): QueueItem => {
+    const rawPayload = row.payload_json as string;
+    let payload: Record<string, unknown>;
+    try {
+      payload = JSON.parse(rawPayload) as Record<string, unknown>;
+    } catch {
+      payload = { _raw: rawPayload };
+    }
+
+    return {
+      id: row.queue_id as string,
+      payload,
+      enqueuedAt: row.created_at as string,
+      status: row.status as QueueItemStatus,
+      attempts: Number(row.attempts ?? 0),
+    };
+  });
 };
