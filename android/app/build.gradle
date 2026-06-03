@@ -52,8 +52,9 @@ android {
 
     packagingOptions {
         jniLibs {
-            useLegacyPackaging false
+            useLegacyPackaging true
         }
+        pickFirst '**/libcrypto.so'
     }
 
     androidResources {
@@ -91,6 +92,9 @@ dependencies {
     implementation("com.facebook.react:react-android")
     implementation("org.tensorflow:tensorflow-lite:2.16.1")
     implementation("org.tensorflow:tensorflow-lite-select-tf-ops:2.16.1")
+
+    // Required by op-sqlite SQLCipher mode — provides libcrypto.so native library
+    implementation("com.android.ndk.thirdparty:openssl:1.1.1q-beta-1")
 
     if (hermesEnabled) {
         implementation("com.facebook.react:hermes-android")
