@@ -54,6 +54,10 @@ struct ProcessedFrameResult {
   bool passiveTextureOk{true};
   bool passiveDepthOk{true};
   float passiveDepthRatio{0.0f};
+  uint64_t framesProcessed{0};
+  uint64_t framesWithFace{0};
+  bool embeddingValid{false};
+  uint64_t embeddingFrameId{0};
   std::vector<float> embedding;
   float sharpnessScore{0.0f};
 };
@@ -89,6 +93,8 @@ class FrameProcessorPlugin {
   std::atomic<bool> isProcessing_{false};
   std::atomic<bool> running_{false};
   std::atomic<int> livenessState_{static_cast<int>(NativeLivenessState::kIdle)};
+  std::atomic<uint64_t> framesProcessed_{0};
+  std::atomic<uint64_t> framesWithFace_{0};
   std::atomic<uint64_t> droppedFrameCount_{0};
   std::atomic<uint64_t> replacedFrameCount_{0};
   std::condition_variable mailboxCv_;
@@ -99,6 +105,10 @@ class FrameProcessorPlugin {
   mutable std::mutex fsmMutex_;
   offlineface::landmarks::LivenessFSM livenessFsm_;
   ProcessedFrameResult latestResult_{};
+  std::vector<float> latestEmbedding_;
+  bool latestEmbeddingValid_{false};
+  uint64_t latestEmbeddingFrameId_{0};
+  std::atomic<bool> embeddingWrittenThisSession_{false};
   std::function<void(const ProcessedFrameResult&)> callback_;
 };
 }

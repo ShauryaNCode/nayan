@@ -41,7 +41,12 @@ export type NativeFaceAuthResult = {
   readonly passiveTextureOk: boolean;
   readonly passiveDepthOk: boolean;
   readonly passiveDepthRatio: number;
+  readonly framesProcessed: number;
+  readonly framesWithFace: number;
+  readonly embeddingValid: boolean;
+  readonly embeddingFrameId: number;
   readonly embedding: Float32Array;
+  readonly embeddingPreview: number[];
   readonly embeddingLength: number;
   readonly embeddingByteLength: number;
 };

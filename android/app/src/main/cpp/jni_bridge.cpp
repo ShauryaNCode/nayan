@@ -126,12 +126,10 @@ GetInitializedPipeline() {
   return GetOrCreatePipelineLocked();
 }
 
-offlineface::frameprocessor::ProcessedFrameResult SnapshotLatestResult() {
+std::shared_ptr<offlineface::frameprocessor::FrameProcessorPlugin>
+GetExistingPipeline() {
   std::lock_guard<std::mutex> lock(gPipelineMutex);
-  if (gFrameProcessorPlugin == nullptr) {
-    return offlineface::frameprocessor::ProcessedFrameResult{};
-  }
-  return gFrameProcessorPlugin->DrainLatestResult();
+  return gFrameProcessorPlugin;
 }
 
 offlineface::frameprocessor::NativeLivenessState DecodeLivenessState(
@@ -177,8 +175,12 @@ jsi::Function CreateLatestResultFunction(jsi::Runtime& runtime) {
          const jsi::Value&,
          const jsi::Value*,
          size_t) -> jsi::Value {
-        auto hostObject = offlineface::frameprocessor::MakeResultHostObject(
-            SnapshotLatestResult());
+        auto pipeline = offlineface::jni::GetExistingPipeline();
+        std::shared_ptr<jsi::HostObject> hostObject =
+            pipeline == nullptr
+                ? offlineface::frameprocessor::MakeResultHostObject({})
+                : offlineface::frameprocessor::MakeLiveResultHostObject(
+                      std::move(pipeline));
         return jsi::Value(
             rt, jsi::Object::createFromHostObject(rt, std::move(hostObject)));
       });

@@ -19,4 +19,9 @@ export type LivenessTelemetry = FaceData & {
   passiveTextureOk: boolean;
   passiveDepthOk: boolean;
   passiveDepthRatio: number;
+  framesProcessed: number;
+  framesWithFace: number;
+  embeddingValid: boolean;
+  embeddingLength: number;
+  embeddingFrameId: number;
 };

@@ -26,12 +26,16 @@ export function DebugOverlay({
   const [collapsed, setCollapsed] = useState(true);
   const rows = useMemo(
     () => [
+      ['Frames', String(Math.trunc(telemetry.framesProcessed))],
+      ['Face Frames', String(Math.trunc(telemetry.framesWithFace))],
       ['Inference MS', formatNumber(telemetry.inferenceMs, 2)],
       ['FPS', formatNumber(telemetry.fps, 1)],
       ['RAM', `${formatNumber(telemetry.ramMb, 0)} MB`],
       ['EAR', formatNumber(telemetry.ear, 3)],
       ['MAR', formatNumber(telemetry.mar, 3)],
       ['Yaw', formatNumber(telemetry.yaw, 1)],
+      ['FSM', telemetry.state],
+      ['Emb', telemetry.embeddingValid ? `${telemetry.embeddingLength}d` : 'none'],
       ['Texture', telemetry.passiveTextureOk ? 'OK' : 'FAIL'],
       ['Depth', telemetry.passiveDepthOk ? 'OK' : 'FAIL'],
     ],
@@ -66,7 +70,7 @@ const styles = StyleSheet.create({
     position: 'absolute',
     right: 10,
     top: 10,
-    width: 156,
+    width: 184,
     overflow: 'hidden',
     borderRadius: 8,
     backgroundColor: 'rgba(2, 6, 23, 0.78)',

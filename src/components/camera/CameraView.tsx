@@ -61,6 +61,11 @@ const INITIAL_TELEMETRY: LivenessTelemetry = {
   passiveTextureOk: true,
   passiveDepthOk: true,
   passiveDepthRatio: 0,
+  framesProcessed: 0,
+  framesWithFace: 0,
+  embeddingValid: false,
+  embeddingLength: 0,
+  embeddingFrameId: 0,
 };
 
 function useNativeLivenessTelemetry(
@@ -98,6 +103,11 @@ function useNativeLivenessTelemetry(
           passiveTextureOk: latest.passiveTextureOk ?? true,
           passiveDepthOk: latest.passiveDepthOk ?? true,
           passiveDepthRatio: latest.passiveDepthRatio ?? 0,
+          framesProcessed: latest.framesProcessed ?? 0,
+          framesWithFace: latest.framesWithFace ?? 0,
+          embeddingValid: latest.embeddingValid ?? false,
+          embeddingLength: latest.embeddingLength ?? 0,
+          embeddingFrameId: latest.embeddingFrameId ?? 0,
         });
       }
     }, 250);

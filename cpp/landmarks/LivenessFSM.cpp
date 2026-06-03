@@ -17,6 +17,7 @@ LivenessFSM::LivenessFSM(LivenessThresholds thresholds)
     : thresholds_(std::move(thresholds)),
       stateEnteredAt_(Clock::now()),
       challengeStartedAt_(stateEnteredAt_),
+      lastFaceSeenAt_(stateEnteredAt_),
       blinkClosedAt_(stateEnteredAt_),
       smileStartedAt_(stateEnteredAt_) {}
 
@@ -31,11 +32,18 @@ LivenessSnapshot LivenessFSM::Update(const LivenessInput& input) {
   }
 
   if (!input.metrics.faceDetected) {
+    if (state == LivenessState::kChallengeActive && hasLastFaceSeen_ &&
+        input.timestamp - lastFaceSeenAt_ <= thresholds_.faceDropoutTolerance) {
+      reason_ = "brief face dropout tolerated";
+      return Snapshot();
+    }
     if (state != LivenessState::kIdle) {
       Reset(input.timestamp);
     }
     return Snapshot();
   }
+  lastFaceSeenAt_ = input.timestamp;
+  hasLastFaceSeen_ = true;
 
   if (!RunPassiveChecks(input)) {
     Fail("passive antispoof check failed", input.timestamp);
@@ -45,7 +53,8 @@ LivenessSnapshot LivenessFSM::Update(const LivenessInput& input) {
   if (state == LivenessState::kIdle) {
     StoreState(LivenessState::kDetected);
     stateEnteredAt_ = input.timestamp;
-    baselineYaw_ = input.metrics.yaw;
+  baselineYaw_ = input.metrics.yaw;
+    baselineMar_ = input.metrics.mar;
     reason_ = "face detected";
     return Snapshot();
   }
@@ -93,13 +102,16 @@ void LivenessFSM::StartChallenge(LivenessChallenge challenge,
   StoreState(LivenessState::kChallengeActive);
   requiresVerification_.store(false, std::memory_order_release);
   challengeStartedAt_ = now;
+  lastFaceSeenAt_ = now;
   stateEnteredAt_ = now;
   blinkClosedAt_ = now;
   smileStartedAt_ = now;
   blinkWasClosed_ = false;
   blinkBaselineCaptured_ = false;
+  smileBaselineCaptured_ = false;
   challengeSatisfied_ = false;
   turnBaselineCaptured_ = false;
+  hasLastFaceSeen_ = true;
   reason_ = "challenge active";
 }
 
@@ -109,14 +121,18 @@ void LivenessFSM::Reset(Clock::time_point now) {
   requiresVerification_.store(false, std::memory_order_release);
   stateEnteredAt_ = now;
   challengeStartedAt_ = now;
+  lastFaceSeenAt_ = now;
   blinkClosedAt_ = now;
   smileStartedAt_ = now;
   baselineYaw_ = 0.0f;
   baselineEar_ = 0.0f;
+  baselineMar_ = 0.0f;
   blinkWasClosed_ = false;
   blinkBaselineCaptured_ = false;
+  smileBaselineCaptured_ = false;
   challengeSatisfied_ = false;
   turnBaselineCaptured_ = false;
+  hasLastFaceSeen_ = false;
   reason_.clear();
 }
 
@@ -195,10 +211,11 @@ void LivenessFSM::EvaluateBlink(const LivenessInput& input) {
     return;
   }
 
-  const float dynamicClosedEar =
-      std::min(thresholds_.blinkClosedEar, baselineEar_ * 0.72f);
+  const float dynamicClosedEar = std::max(
+      thresholds_.blinkClosedEar,
+      baselineEar_ * 0.78f);
   const float dynamicOpenEar =
-      std::max(dynamicClosedEar + 0.015f, baselineEar_ * 0.82f);
+      std::max(dynamicClosedEar + 0.015f, baselineEar_ * 0.88f);
 
   if (!blinkWasClosed_ && ear <= dynamicClosedEar) {
     blinkWasClosed_ = true;
@@ -221,7 +238,23 @@ void LivenessFSM::EvaluateBlink(const LivenessInput& input) {
 }
 
 void LivenessFSM::EvaluateSmile(const LivenessInput& input) {
-  if (input.metrics.mar > thresholds_.smileMar) {
+  const float mar = input.metrics.mar;
+  if (!std::isfinite(mar) || mar <= 0.0f) {
+    reason_ = "waiting for valid mouth metric";
+    return;
+  }
+
+  if (!smileBaselineCaptured_) {
+    baselineMar_ = mar;
+    smileBaselineCaptured_ = true;
+    reason_ = "smile baseline captured";
+    return;
+  }
+
+  const float dynamicSmileMar =
+      std::max(thresholds_.smileMar, baselineMar_ * 1.18f);
+
+  if (mar > dynamicSmileMar) {
     if (smileStartedAt_ == challengeStartedAt_) {
       smileStartedAt_ = input.timestamp;
     }
@@ -246,7 +279,7 @@ void LivenessFSM::EvaluateTurn(const LivenessInput& input, bool left) {
 
   const float delta = input.metrics.yaw - baselineYaw_;
   const bool passed = left ? delta <= -thresholds_.yawDeltaDegrees
-                           : std::abs(delta) >= thresholds_.yawDeltaDegrees;
+                           : delta >= thresholds_.yawDeltaDegrees;
   if (passed && input.timestamp - challengeStartedAt_ <= thresholds_.turnWindow) {
     Pass(left ? "turn left challenge passed" : "turn right challenge passed");
   }

@@ -15,6 +15,7 @@ import {CameraView} from './components/camera/CameraView';
 import {
   initializeFrameProcessorBridge,
   isNativeFrameProcessorPluginAvailable,
+  setNativeLivenessChallenge,
 } from './components/camera/FrameProcessorBridge';
 
 import {
@@ -35,13 +36,19 @@ type OfflineFaceAuthResult = {
   faceMeshThreadCount?: number;
   mobileFaceNetThreadCount?: number;
   livenessState?: number;
+  livenessChallenge?: number;
   faceDetected?: boolean;
   ear?: number;
   mar?: number;
   yaw?: number;
   pitch?: number;
   roll?: number;
+  framesProcessed?: number;
+  framesWithFace?: number;
+  embeddingValid?: boolean;
+  embeddingFrameId?: number;
   embedding: Float32Array;
+  embeddingPreview?: number[];
   embeddingLength?: number;
   embeddingByteLength?: number;
 };
@@ -50,6 +57,7 @@ type OfflineFaceAuthGlobal = {
   getLatestResult: () => OfflineFaceAuthResult;
   isInitialized: () => boolean;
   setLivenessState?: (state: number) => boolean;
+  setLivenessChallenge?: (challenge: number) => boolean;
 };
 
 type NativeBridgeModule = {
@@ -165,8 +173,7 @@ function readEmbedding(result: OfflineFaceAuthResult): Float32Array {
 function isUsableEmbedding(result: OfflineFaceAuthResult): boolean {
   const embedding = readEmbedding(result);
   return (
-    result.accepted === true &&
-    result.faceDetected === true &&
+    (result.embeddingValid === true || result.accepted === true) &&
     embedding.length === EMBEDDING_FLOAT_COUNT
   );
 }
@@ -190,12 +197,17 @@ function formatResult(result: OfflineFaceAuthResult): string {
       faceMeshThreadCount: result.faceMeshThreadCount,
       mobileFaceNetThreadCount: result.mobileFaceNetThreadCount,
       livenessState: result.livenessState,
+      livenessChallenge: result.livenessChallenge,
       faceDetected: result.faceDetected,
       ear: result.ear,
       mar: result.mar,
       yaw: result.yaw,
       pitch: result.pitch,
       roll: result.roll,
+      framesProcessed: result.framesProcessed,
+      framesWithFace: result.framesWithFace,
+      embeddingValid: result.embeddingValid,
+      embeddingFrameId: result.embeddingFrameId,
       usableEmbedding: isUsableEmbedding(result),
       embeddingLength: embeddingArray.length,
       nativeEmbeddingLength: result.embeddingLength,
@@ -384,11 +396,7 @@ export default function App(): React.JSX.Element {
   const handleChallenge = useCallback(
     async (challenge: NativeChallenge) => {
       try {
-        if (nativeBridge?.setLivenessChallenge == null) {
-          throw new Error('NativeBridge.setLivenessChallenge is unavailable');
-        }
-
-        await nativeBridge.setLivenessChallenge(challenge);
+        await setNativeLivenessChallenge(challenge);
         setConsoleOutput(
           challenge === 'NONE'
             ? 'Liveness FSM reset. Center your face in the camera.'

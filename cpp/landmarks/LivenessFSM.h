@@ -32,10 +32,11 @@ struct LivenessThresholds {
   std::chrono::milliseconds blinkWindow{800};
   float smileMar{0.45f};
   std::chrono::milliseconds smileSustain{600};
-  float yawDeltaDegrees{20.0f};
+  float yawDeltaDegrees{8.0f};
   std::chrono::milliseconds turnWindow{2000};
   std::chrono::milliseconds challengeTimeout{4000};
   std::chrono::milliseconds failResetDelay{2000};
+  std::chrono::milliseconds faceDropoutTolerance{300};
 };
 
 struct LivenessInput {
@@ -93,14 +94,18 @@ class LivenessFSM {
   // Cached result of the most recent passive check.
   bool lastPassiveOk_{true};
   std::chrono::steady_clock::time_point challengeStartedAt_;
+  std::chrono::steady_clock::time_point lastFaceSeenAt_;
   std::chrono::steady_clock::time_point blinkClosedAt_;
   std::chrono::steady_clock::time_point smileStartedAt_;
   float baselineYaw_{0.0f};
   float baselineEar_{0.0f};
+  float baselineMar_{0.0f};
   bool blinkWasClosed_{false};
   bool blinkBaselineCaptured_{false};
+  bool smileBaselineCaptured_{false};
   bool challengeSatisfied_{false};
   bool turnBaselineCaptured_{false};
+  bool hasLastFaceSeen_{false};
   std::string reason_;
 };
 
