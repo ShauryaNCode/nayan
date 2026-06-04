@@ -1,2 +1,17 @@
-# Path: OfflineFaceAuth/deploy/aws/lambda/authorizer/package.json
-# Purpose: Authorizer Lambda dependencies with aws-sdk for S3 pre-signed URL generation.
+{
+  "name": "nayan-authorizer",
+  "version": "1.0.0",
+  "description": "Lambda authorizer generating pre-signed S3 URLs for multipart upload, validating device authentication tokens.",
+  "main": "index.js",
+  "private": true,
+  "scripts": {
+    "deploy": "zip -r authorizer.zip . && aws lambda update-function-code --function-name NayanAuthorizer --zip-file fileb://authorizer.zip"
+  },
+  "dependencies": {
+    "@aws-sdk/client-s3": "^3.583.0",
+    "@aws-sdk/s3-request-presigner": "^3.583.0"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
