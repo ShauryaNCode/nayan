@@ -3,6 +3,7 @@ import {EmbeddingCrypto} from '../crypto/EmbeddingCrypto';
 import {NativeSecureKey} from '../crypto/NativeSecureKey';
 import {wrapDEKWithAdminPublicKey} from '../crypto/RSAOAEP';
 import {getDatabase} from './database/DatabaseManager';
+import {executeSql} from './database/SQLiteCompat';
 import {
   bytesToHex,
   float32ToBase64,
@@ -83,8 +84,9 @@ function executeEnrollmentTransaction(params: {
   const consentLogId = `${params.personnelId}:consent:${params.consentTs}`;
 
   try {
-    db.executeSync('BEGIN IMMEDIATE;');
-    db.executeSync(
+    executeSql(db, 'BEGIN IMMEDIATE;');
+    executeSql(
+      db,
       `
         INSERT INTO personnel (
           personnel_id,
@@ -115,7 +117,8 @@ function executeEnrollmentTransaction(params: {
         isoNow,
       ],
     );
-    db.executeSync(
+    executeSql(
+      db,
       `
         INSERT INTO consent_log (
           id,
@@ -127,10 +130,10 @@ function executeEnrollmentTransaction(params: {
       `,
       [consentLogId, params.personnelId, params.consentTs, isoNow],
     );
-    db.executeSync('COMMIT;');
+    executeSql(db, 'COMMIT;');
   } catch (error) {
     try {
-      db.executeSync('ROLLBACK;');
+      executeSql(db, 'ROLLBACK;');
     } catch (_) {
       // Preserve the original database error.
     }

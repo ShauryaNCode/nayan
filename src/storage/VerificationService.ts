@@ -2,6 +2,7 @@ import {EmbeddingCrypto} from '../crypto/EmbeddingCrypto';
 import {NativeSecureKey} from '../crypto/NativeSecureKey';
 import {base64ToFloat32} from '../utils/BufferUtils';
 import {getDatabase} from './database/DatabaseManager';
+import {executeSql} from './database/SQLiteCompat';
 
 type PersonnelEmbeddingRow = {
   kek_hw_wrapped?: string;
@@ -42,7 +43,8 @@ export const VerificationService = {
     }
 
     const db = getDatabase();
-    const result = db.executeSync(
+    const result = executeSql(
+      db,
       `
         SELECT kek_hw_wrapped, encrypted_embed
         FROM personnel

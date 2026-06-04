@@ -2,7 +2,6 @@ import {
   isSQLCipher,
   open,
   type DB,
-  type QueryResult,
 } from '@op-engineering/op-sqlite';
 
 import {
@@ -13,6 +12,7 @@ import {
   runMigrations,
   type MigrationRunnerResult,
 } from './migrations/MigrationRunner';
+import {executeSql, getFirstRow} from './SQLiteCompat';
 
 export const DEFAULT_DATABASE_NAME = 'face_auth.db';
 
@@ -51,14 +51,6 @@ export function isSQLCipherEnabled(): boolean {
   return isSQLCipher();
 }
 
-function getFirstRow(result: QueryResult): Record<string, unknown> | undefined {
-  if (Array.isArray(result.rows)) {
-    return result.rows[0] as Record<string, unknown> | undefined;
-  }
-
-  return undefined;
-}
-
 function readNumber(
   row: Record<string, unknown> | undefined,
   namedColumn: string,
@@ -73,17 +65,18 @@ function readNumber(
 }
 
 export function configureDatabasePragmas(db: DB): DatabasePragmaState {
-  const journalModeResult = db.executeSync('PRAGMA journal_mode=WAL;');
-  db.executeSync('PRAGMA synchronous=NORMAL;');
-  const walAutocheckpointResult = db.executeSync(
+  const journalModeResult = executeSql(db, 'PRAGMA journal_mode=WAL;');
+  executeSql(db, 'PRAGMA synchronous=NORMAL;');
+  const walAutocheckpointResult = executeSql(
+    db,
     'PRAGMA wal_autocheckpoint=100;',
   );
-  db.executeSync('PRAGMA cache_size=-8000;');
-  db.executeSync('PRAGMA foreign_keys=ON;');
+  executeSql(db, 'PRAGMA cache_size=-8000;');
+  executeSql(db, 'PRAGMA foreign_keys=ON;');
 
-  const synchronousResult = db.executeSync('PRAGMA synchronous;');
-  const cacheSizeResult = db.executeSync('PRAGMA cache_size;');
-  const foreignKeysResult = db.executeSync('PRAGMA foreign_keys;');
+  const synchronousResult = executeSql(db, 'PRAGMA synchronous;');
+  const cacheSizeResult = executeSql(db, 'PRAGMA cache_size;');
+  const foreignKeysResult = executeSql(db, 'PRAGMA foreign_keys;');
 
   const journalModeRow = getFirstRow(journalModeResult);
   const walAutocheckpointRow = getFirstRow(walAutocheckpointResult);

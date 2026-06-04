@@ -34,7 +34,19 @@ export type NativeFaceAuthResult = {
   readonly yaw: number;
   readonly pitch: number;
   readonly roll: number;
+  readonly inferenceMs: number;
+  readonly ramMb: number;
+  readonly fftHighFrequencyRatio: number;
+  readonly fftMoireScore: number;
+  readonly passiveTextureOk: boolean;
+  readonly passiveDepthOk: boolean;
+  readonly passiveDepthRatio: number;
+  readonly framesProcessed: number;
+  readonly framesWithFace: number;
+  readonly embeddingValid: boolean;
+  readonly embeddingFrameId: number;
   readonly embedding: Float32Array;
+  readonly embeddingPreview: number[];
   readonly embeddingLength: number;
   readonly embeddingByteLength: number;
 };
@@ -44,6 +56,11 @@ export type NativeFaceAuthModule = {
   isInitialized(): boolean;
   setLivenessState(state: NativeLivenessStateCode): boolean;
   setLivenessChallenge(challenge: NativeLivenessChallengeCode): boolean;
+  startEnrollmentBurst(): void;
+  submitEnrollmentFrame(
+    embedding: Float32Array,
+    timestampNs?: number,
+  ): { status: 'PENDING' | 'SUCCESS' | 'FAILED'; centroid: Float32Array | null };
   readonly frameProcessorRegistryReady: boolean;
 };
 
@@ -63,7 +80,7 @@ export interface NativeBridgeModule {
     height: number,
     stride: number,
     timestampNs: number,
-): Promise<boolean>;
+  ) => Promise<boolean>;
   setLivenessState?: (state: NativeLivenessState) => Promise<void>;
   setLivenessChallenge?: (challenge: NativeLivenessChallenge) => Promise<void>;
   setLivenessPassed?: (passed: boolean) => Promise<void>;

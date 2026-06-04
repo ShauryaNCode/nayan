@@ -15,8 +15,22 @@
 #include <tensorflow/lite/interpreter.h>
 #include <tensorflow/lite/kernels/register.h>
 #include <tensorflow/lite/model.h>
+#if defined(__APPLE__) && __has_include(<tensorflow/lite/delegates/coreml/coreml_delegate.h>)
+#define NAYAN_HAS_COREML_DELEGATE 1
+#include <tensorflow/lite/delegates/coreml/coreml_delegate.h>
+#else
+#define NAYAN_HAS_COREML_DELEGATE 0
+#endif
+#if defined(__APPLE__) && __has_include(<tensorflow/lite/delegates/gpu/metal_delegate.h>)
+#define NAYAN_HAS_METAL_DELEGATE 1
+#include <tensorflow/lite/delegates/gpu/metal_delegate.h>
+#else
+#define NAYAN_HAS_METAL_DELEGATE 0
+#endif
 #else
 #define NAYAN_HAS_TFLITE 0
+#define NAYAN_HAS_COREML_DELEGATE 0
+#define NAYAN_HAS_METAL_DELEGATE 0
 #endif
 
 #include "../common/MathUtils.h"
@@ -106,10 +120,32 @@ class MobileFaceNetRunner::Impl {
       return false;
     }
 
+#if NAYAN_HAS_COREML_DELEGATE
+    TfLiteCoreMlDelegateOptions coreMlOptions = {};
+    coreMlDelegate_.reset(TfLiteCoreMlDelegateCreate(&coreMlOptions));
+    if (coreMlDelegate_ &&
+        interpreter_->ModifyGraphWithDelegate(coreMlDelegate_.get()) !=
+            kTfLiteOk) {
+      coreMlDelegate_.reset();
+    }
+#endif
+#if NAYAN_HAS_METAL_DELEGATE
+    if (coreMlDelegate_ == nullptr) {
+      metalDelegate_.reset(TFLGpuDelegateCreate(nullptr));
+      if (metalDelegate_ &&
+          interpreter_->ModifyGraphWithDelegate(metalDelegate_.get()) !=
+              kTfLiteOk) {
+        metalDelegate_.reset();
+      }
+    }
+#endif
+
     TfLiteXNNPackDelegateOptions options =
         TfLiteXNNPackDelegateOptionsDefault();
     options.num_threads = 2;
-    xnnpackDelegate_.reset(TfLiteXNNPackDelegateCreate(&options));
+    if (coreMlDelegate_ == nullptr && metalDelegate_ == nullptr) {
+      xnnpackDelegate_.reset(TfLiteXNNPackDelegateCreate(&options));
+    }
     if (xnnpackDelegate_ &&
         interpreter_->ModifyGraphWithDelegate(xnnpackDelegate_.get()) !=
             kTfLiteOk) {
@@ -253,6 +289,30 @@ class MobileFaceNetRunner::Impl {
   std::unique_ptr<tflite::FlatBufferModel> model_;
   std::unique_ptr<tflite::Interpreter> interpreter_;
   std::unique_ptr<TfLiteDelegate, XnnpackDeleter> xnnpackDelegate_;
+#if NAYAN_HAS_COREML_DELEGATE
+  struct CoreMlDeleter {
+    void operator()(TfLiteDelegate* delegate) const {
+      if (delegate != nullptr) {
+        TfLiteCoreMlDelegateDelete(delegate);
+      }
+    }
+  };
+  std::unique_ptr<TfLiteDelegate, CoreMlDeleter> coreMlDelegate_;
+#else
+  std::unique_ptr<TfLiteDelegate> coreMlDelegate_;
+#endif
+#if NAYAN_HAS_METAL_DELEGATE
+  struct MetalDeleter {
+    void operator()(TfLiteDelegate* delegate) const {
+      if (delegate != nullptr) {
+        TFLGpuDelegateDelete(delegate);
+      }
+    }
+  };
+  std::unique_ptr<TfLiteDelegate, MetalDeleter> metalDelegate_;
+#else
+  std::unique_ptr<TfLiteDelegate> metalDelegate_;
+#endif
 #endif
 };
 

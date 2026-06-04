@@ -22,11 +22,15 @@ set(NAYAN_ENGINE_INCLUDE_DIRS
 
 set(NAYAN_ENGINE_SOURCES
   ${CMAKE_CURRENT_SOURCE_DIR}/common/MathUtils.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/antispoof/DepthCueChecker.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/antispoof/FFTTextureAnalyzer.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/clahe/AdaptiveClipController.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/clahe/CLAHEEngine.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/clahe/ColorSpaceConverter.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/frame-processor/FrameProcessorPlugin.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/frame-processor/JSIHostObject.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/frame-processor/PixelBufferPool.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/inference/CentroidCalculator.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/inference/EmbeddingAverager.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/inference/MobileFaceNetRunner.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/inference/TFLiteInterpreterManager.cpp

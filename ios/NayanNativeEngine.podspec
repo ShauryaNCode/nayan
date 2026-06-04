@@ -27,9 +27,15 @@ Pod::Spec.new do |s|
   }
 
   s.source_files = [
+    'OfflineFaceAuth/native/NativeBridge.h',
+    'OfflineFaceAuth/native/NativeBridge.mm',
+    'OfflineFaceAuth/native/NayanFrameProcessorPlugin.mm',
     '../cpp/common/MathUtils.cpp',
+    '../cpp/antispoof/DepthCueChecker.cpp',
+    '../cpp/antispoof/FFTTextureAnalyzer.cpp',
     '../cpp/clahe/AdaptiveClipController.cpp',
     '../cpp/clahe/CLAHEEngine.cpp',
+    '../cpp/clahe/ColorSpaceConverter.cpp',
     '../cpp/frame-processor/FrameProcessorPlugin.cpp',
     '../cpp/frame-processor/JSIHostObject.cpp',
     '../cpp/frame-processor/PixelBufferPool.cpp',
@@ -46,4 +52,6 @@ Pod::Spec.new do |s|
 
   s.dependency 'React-Core'
   s.dependency 'React-jsi'
+  s.dependency 'VisionCamera'
+  s.frameworks = ['CoreVideo', 'CoreMedia', 'CoreML', 'Metal', 'Foundation']
 end
