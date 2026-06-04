@@ -391,29 +391,39 @@ void FrameProcessorPlugin::ProcessCurrentFrame(FrameBuffer* frame) {
 
   const std::size_t pixelCount =
       static_cast<std::size_t>(width) * static_cast<std::size_t>(height);
-  std::vector<uint8_t> rgb(pixelCount * 3U, 0U);
-  std::vector<float> lab(pixelCount * 3U, 0.0f);
-  std::vector<uint8_t> lChannel(pixelCount, 0U);
-  std::vector<uint8_t> enhancedL(pixelCount, 0U);
-  std::vector<uint8_t> enhancedRgb(pixelCount * 3U, 0U);
-  std::vector<uint8_t> enhanced(
-      static_cast<std::size_t>(width) * static_cast<std::size_t>(height), 0U);
+  // Reuse pooled buffers; resize only when frame dimensions change.
+  if (width != cachedWidth_ || height != cachedHeight_) {
+    cachedWidth_ = width;
+    cachedHeight_ = height;
+    rgb_.resize(pixelCount * 3U);
+    lab_.resize(pixelCount * 3U);
+    lChannel_.resize(pixelCount);
+    enhancedL_.resize(pixelCount);
+    enhancedRgb_.resize(pixelCount * 3U);
+    enhanced_.resize(pixelCount);
+  }
+  std::memset(rgb_.data(), 0, rgb_.size());
+  std::fill(lab_.begin(), lab_.end(), 0.0f);
+  std::memset(lChannel_.data(), 0, lChannel_.size());
+  std::memset(enhancedL_.data(), 0, enhancedL_.size());
+  std::memset(enhancedRgb_.data(), 0, enhancedRgb_.size());
+  std::memset(enhanced_.data(), 0, enhanced_.size());
   offlineface::clahe::GrayToRgb(
-      frame->data, width, height, stride, rgb.data());
-  offlineface::clahe::RgbToLab(rgb.data(), width, height, lab.data());
-  offlineface::clahe::ExtractLChannel(lab.data(), width, height, lChannel.data());
-  claheEngine_->Apply(lChannel.data(), width, height, width, enhancedL.data());
+      frame->data, width, height, stride, rgb_.data());
+  offlineface::clahe::RgbToLab(rgb_.data(), width, height, lab_.data());
+  offlineface::clahe::ExtractLChannel(lab_.data(), width, height, lChannel_.data());
+  claheEngine_->Apply(lChannel_.data(), width, height, width, enhancedL_.data());
   offlineface::clahe::ReplaceLChannel(
-      enhancedL.data(), width, height, lab.data());
-  offlineface::clahe::LabToRgb(lab.data(), width, height, enhancedRgb.data());
-  offlineface::clahe::RgbToGray(enhancedRgb.data(), width, height, enhanced.data());
+      enhancedL_.data(), width, height, lab_.data());
+  offlineface::clahe::LabToRgb(lab_.data(), width, height, enhancedRgb_.data());
+  offlineface::clahe::RgbToGray(enhancedRgb_.data(), width, height, enhanced_.data());
 
   const auto faceMeshResult =
-      interpreterManager_->RunFaceMesh(enhanced.data(), width, height, width);
+      interpreterManager_->RunFaceMesh(enhanced_.data(), width, height, width);
   const auto depthCueResult = antispoof::DepthCueResult{};
   const auto fftResult = faceMeshResult.faceDetected
                              ? ::antispoof::AnalyzeFaceCropFixed(
-                                   enhanced.data(),
+                                   enhanced_.data(),
                                    static_cast<int>(width),
                                    static_cast<int>(height),
                                    static_cast<int>(width))
@@ -446,7 +456,7 @@ void FrameProcessorPlugin::ProcessCurrentFrame(FrameBuffer* frame) {
   std::vector<float> embedding;
   if (runMobileFaceNet) {
     embedding =
-        interpreterManager_->RunEmbedding(enhanced.data(), width, height, width);
+        interpreterManager_->RunEmbedding(enhanced_.data(), width, height, width);
   }
 
   std::vector<float> persistentEmbedding;
@@ -509,7 +519,7 @@ void FrameProcessorPlugin::ProcessCurrentFrame(FrameBuffer* frame) {
   nextResult.embeddingFrameId = persistentEmbeddingFrameId;
   nextResult.embedding = std::move(persistentEmbedding);
   nextResult.sharpnessScore =
-      ComputeSharpness(enhanced.data(), width, height, width);
+      ComputeSharpness(enhanced_.data(), width, height, width);
 
   {
     std::lock_guard<std::mutex> lock(resultMutex_);

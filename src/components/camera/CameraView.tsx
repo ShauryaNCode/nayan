@@ -72,7 +72,8 @@ function useNativeLivenessTelemetry(
   isActive: boolean,
 ): LivenessTelemetry {
   const [telemetry, setTelemetry] = useState<LivenessTelemetry>(INITIAL_TELEMETRY);
-  const lastFrameAt = useRef<number | null>(null);
+  const lastPollAt = useRef<number | null>(null);
+  const lastFrameCount = useRef<number>(0);
 
   useEffect(() => {
     if (!isActive) {
@@ -82,35 +83,61 @@ function useNativeLivenessTelemetry(
     const interval = setInterval(() => {
       const latest = getLatestFrameResult();
       const now = Date.now();
-      const previous = lastFrameAt.current;
-      lastFrameAt.current = now;
-      const fps = previous == null || now <= previous ? 0 : 1000 / (now - previous);
+      const previousTime = lastPollAt.current;
+      const previousCount = lastFrameCount.current;
+      lastPollAt.current = now;
 
       if (latest != null) {
-        setTelemetry({
-          state: LIVENESS_STATE_CODES[latest.livenessState ?? 0] ?? 'IDLE',
-          challenge:
-            LIVENESS_CHALLENGE_CODES[latest.livenessChallenge ?? 0] ?? 'NONE',
-          faceDetected: latest.faceDetected,
-          ear: latest.ear,
-          mar: latest.mar,
-          yaw: latest.yaw,
-          pitch: latest.pitch,
-          roll: latest.roll,
-          inferenceMs: latest.inferenceMs ?? 0,
-          fps,
-          ramMb: latest.ramMb ?? 0,
-          passiveTextureOk: latest.passiveTextureOk ?? true,
-          passiveDepthOk: latest.passiveDepthOk ?? true,
-          passiveDepthRatio: latest.passiveDepthRatio ?? 0,
-          framesProcessed: latest.framesProcessed ?? 0,
-          framesWithFace: latest.framesWithFace ?? 0,
-          embeddingValid: latest.embeddingValid ?? false,
-          embeddingLength: latest.embeddingLength ?? 0,
-          embeddingFrameId: latest.embeddingFrameId ?? 0,
+        const currentCount = latest.framesProcessed ?? 0;
+        lastFrameCount.current = currentCount;
+
+        // Calculate real FPS from frame counter delta
+        let fps = 0;
+        if (previousTime != null && now > previousTime) {
+          const elapsedSec = (now - previousTime) / 1000;
+          const frameDelta = currentCount - previousCount;
+          fps = frameDelta > 0 ? frameDelta / elapsedSec : 0;
+        }
+
+        const nextState = LIVENESS_STATE_CODES[latest.livenessState ?? 0] ?? 'IDLE';
+        const nextChallenge =
+          LIVENESS_CHALLENGE_CODES[latest.livenessChallenge ?? 0] ?? 'NONE';
+
+        setTelemetry(prev => {
+          // Guard against no-op re-renders
+          if (
+            prev.state === nextState &&
+            prev.challenge === nextChallenge &&
+            prev.faceDetected === latest.faceDetected &&
+            Math.abs(prev.fps - fps) < 0.5 &&
+            prev.framesProcessed === currentCount
+          ) {
+            return prev;
+          }
+          return {
+            state: nextState,
+            challenge: nextChallenge,
+            faceDetected: latest.faceDetected,
+            ear: latest.ear,
+            mar: latest.mar,
+            yaw: latest.yaw,
+            pitch: latest.pitch,
+            roll: latest.roll,
+            inferenceMs: latest.inferenceMs ?? 0,
+            fps,
+            ramMb: latest.ramMb ?? 0,
+            passiveTextureOk: latest.passiveTextureOk ?? true,
+            passiveDepthOk: latest.passiveDepthOk ?? true,
+            passiveDepthRatio: latest.passiveDepthRatio ?? 0,
+            framesProcessed: currentCount,
+            framesWithFace: latest.framesWithFace ?? 0,
+            embeddingValid: latest.embeddingValid ?? false,
+            embeddingLength: latest.embeddingLength ?? 0,
+            embeddingFrameId: latest.embeddingFrameId ?? 0,
+          };
         });
       }
-    }, 250);
+    }, 100);
 
     return () => clearInterval(interval);
   }, [isActive]);
@@ -126,7 +153,7 @@ export function CameraView({
 }: CameraViewProps): React.JSX.Element {
   const device = useCameraDevice('front');
   const format = useCameraFormat(device, [
-    {videoResolution: {width: 1280, height: 720}},
+    {videoResolution: {width: 640, height: 480}},
     {fps: 30},
   ]);
   const {hasPermission, requestPermission} = useCameraPermission();
@@ -192,6 +219,8 @@ export function CameraView({
         style={StyleSheet.absoluteFill}
         device={device}
         format={format}
+        fps={30}
+        pixelFormat="yuv"
         isActive={isActive && hasPermission}
         frameProcessor={frameProcessor}
         onInitialized={onPreviewReady}

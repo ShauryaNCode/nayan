@@ -27,10 +27,14 @@ import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
 import java.security.GeneralSecurityException;
 import java.security.SecureRandom;
 import java.util.Arrays;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
 
 import com.mrousavy.camera.frameprocessor.Frame;
 import javax.crypto.Cipher;
@@ -57,6 +61,32 @@ public final class NativeBridge extends ReactContextBaseJavaModule {
   private static final AtomicBoolean IS_ENGINE_INITIALIZED = new AtomicBoolean(false);
   private static volatile String resolvedMobileFaceNetModelPath = DEFAULT_MOBILEFACENET_PATH;
   private static volatile String resolvedFaceMeshModelPath = DEFAULT_FACEMESH_PATH;
+
+  private static final ExecutorService INFERENCE_EXECUTOR =
+      Executors.newSingleThreadExecutor(r -> {
+        final Thread t = new Thread(r, "NayanInference");
+        t.setPriority(Thread.MAX_PRIORITY - 1);
+        return t;
+      });
+
+  private static final AtomicReference<FrameData> PENDING_FRAME =
+      new AtomicReference<>(null);
+
+  private static final class FrameData {
+    final ByteBuffer yBuffer;
+    final int width;
+    final int height;
+    final int stride;
+    final long timestampNs;
+
+    FrameData(ByteBuffer yBuffer, int width, int height, int stride, long timestampNs) {
+      this.yBuffer = yBuffer;
+      this.width = width;
+      this.height = height;
+      this.stride = stride;
+      this.timestampNs = timestampNs;
+    }
+  }
 
   static {
     System.loadLibrary("offline_face_auth_jni");
@@ -455,11 +485,57 @@ public final class NativeBridge extends ReactContextBaseJavaModule {
       return false;
     }
 
-    if (TFLiteFrameProcessorRunner.isReady()) {
-      return TFLiteFrameProcessorRunner.process(frame);
-    }
+    final Image image = frame.getImage();
+    try {
+      if (image == null || image.getPlanes().length == 0) {
+        return false;
+      }
 
-    return enqueueVisionCameraFrame(frame);
+      final Image.Plane yPlane = image.getPlanes()[0];
+      final ByteBuffer srcBuffer = yPlane.getBuffer();
+      if (srcBuffer == null) {
+        return false;
+      }
+
+      final int width = image.getWidth();
+      final int height = image.getHeight();
+      final int stride = yPlane.getRowStride();
+      final long timestampNs = image.getTimestamp();
+
+      // Copy Y-plane so the Frame can be released immediately
+      final int byteCount = stride * height;
+      final ByteBuffer copy = ByteBuffer.allocateDirect(byteCount);
+      copy.order(ByteOrder.nativeOrder());
+      srcBuffer.position(0);
+      srcBuffer.limit(Math.min(srcBuffer.capacity(), byteCount));
+      copy.put(srcBuffer);
+      copy.rewind();
+
+      final FrameData frameData = new FrameData(copy, width, height, stride, timestampNs);
+
+      // Mailbox pattern: only keep latest frame
+      PENDING_FRAME.set(frameData);
+
+      INFERENCE_EXECUTOR.execute(() -> {
+        final FrameData data = PENDING_FRAME.getAndSet(null);
+        if (data == null) {
+          return;
+        }
+        if (TFLiteFrameProcessorRunner.isReady()) {
+          TFLiteFrameProcessorRunner.processFromCopiedBuffer(
+              data.yBuffer, data.width, data.height, data.stride, data.timestampNs);
+        } else {
+          nativeEnqueueFrame(
+              data.yBuffer, data.width, data.height, data.stride, data.timestampNs);
+        }
+      });
+
+      return true;
+    } finally {
+      if (image != null) {
+        image.close();
+      }
+    }
   }
   private static String resolveKeyProvider(KeystoreManager.KeyHardwareInfo hardwareInfo) {
     if (hardwareInfo.strongBoxBacked) {

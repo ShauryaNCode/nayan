@@ -7,6 +7,7 @@ import android.media.FaceDetector;
 import android.util.Log;
 
 import androidx.annotation.NonNull;
+import androidx.annotation.Nullable;
 
 import com.mrousavy.camera.frameprocessor.Frame;
 
@@ -23,6 +24,7 @@ import java.nio.MappedByteBuffer;
 import java.nio.channels.FileChannel;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.concurrent.locks.ReentrantLock;
 
 final class TFLiteFrameProcessorRunner {
   private static final String TAG = "NayanTFLiteRunner";
@@ -31,7 +33,8 @@ final class TFLiteFrameProcessorRunner {
   private static final int FACE_DETECTOR_MAX_WIDTH = 320;
   private static final float FACE_PRESENCE_HARD_REJECT_THRESHOLD = 0.50f;
   private static final float STRONG_FACE_CANDIDATE_CONFIDENCE = 0.48f;
-  private static final Object LOCK = new Object();
+  private static final Object INIT_LOCK = new Object();
+  private static final ReentrantLock INFERENCE_LOCK = new ReentrantLock();
 
   private static Interpreter faceMeshInterpreter;
   private static Interpreter mobileFaceNetInterpreter;
@@ -39,7 +42,7 @@ final class TFLiteFrameProcessorRunner {
   private TFLiteFrameProcessorRunner() {}
 
   static void initialize(String mobileFaceNetPath, String faceMeshPath) {
-    synchronized (LOCK) {
+    synchronized (INIT_LOCK) {
       closeLocked();
       try {
         faceMeshInterpreter = createInterpreter(faceMeshPath);
@@ -58,13 +61,16 @@ final class TFLiteFrameProcessorRunner {
   }
 
   static boolean isReady() {
-    synchronized (LOCK) {
+    synchronized (INIT_LOCK) {
       return faceMeshInterpreter != null;
     }
   }
 
   static boolean process(@NonNull Frame frame) {
-    synchronized (LOCK) {
+    if (!INFERENCE_LOCK.tryLock()) {
+      return false; // Skip frame — inference still running
+    }
+    try {
       Image image = null;
       try {
         if (faceMeshInterpreter == null) {
@@ -86,52 +92,7 @@ final class TFLiteFrameProcessorRunner {
         final int height = image.getHeight();
         final int stride = yPlane.getRowStride();
         final long timestampNs = image.getTimestamp();
-        final long inferenceStartedNs = System.nanoTime();
-
-        final FaceCandidate faceCandidate =
-            findFaceCandidate(image, yBuffer, width, height, stride);
-        if (!faceCandidate.faceLike) {
-          final float inferenceMs =
-              (System.nanoTime() - inferenceStartedNs) / 1_000_000.0f;
-          return NativeBridge.nativeSubmitModelResult(
-              new float[LANDMARK_FLOAT_COUNT],
-              null,
-              width,
-              height,
-              timestampNs,
-              inferenceMs);
-        }
-
-        final FaceMeshOutput faceMeshOutput =
-            runFaceMesh(yBuffer, width, height, stride, faceCandidate);
-        if (faceMeshOutput == null ||
-            (!faceMeshOutput.facePresent &&
-                faceCandidate.confidence < STRONG_FACE_CANDIDATE_CONFIDENCE)) {
-          final float inferenceMs =
-              (System.nanoTime() - inferenceStartedNs) / 1_000_000.0f;
-          return NativeBridge.nativeSubmitModelResult(
-              new float[LANDMARK_FLOAT_COUNT],
-              null,
-              width,
-              height,
-              timestampNs,
-              inferenceMs);
-        }
-        final float[] landmarks = faceMeshOutput.facePresent
-            ? faceMeshOutput.landmarks
-            : makeCanonicalFaceLandmarks(faceCandidate, width, height);
-
-        float[] embedding = mobileFaceNetInterpreter == null
-            ? null
-            : runMobileFaceNet(yBuffer, width, height, stride);
-        if (embedding == null) {
-          embedding = runDeterministicEmbedding(yBuffer, width, height, stride);
-        }
-        final float inferenceMs =
-            (System.nanoTime() - inferenceStartedNs) / 1_000_000.0f;
-
-        return NativeBridge.nativeSubmitModelResult(
-            landmarks, embedding, width, height, timestampNs, inferenceMs);
+        return processBufferInternal(yBuffer, width, height, stride, timestampNs, image);
       } catch (RuntimeException error) {
         return false;
       } finally {
@@ -139,7 +100,199 @@ final class TFLiteFrameProcessorRunner {
           image.close();
         }
       }
+    } finally {
+      INFERENCE_LOCK.unlock();
     }
+  }
+
+  static boolean processFromCopiedBuffer(
+      ByteBuffer yBuffer, int width, int height, int stride, long timestampNs) {
+    if (!INFERENCE_LOCK.tryLock()) {
+      return false;
+    }
+    try {
+      if (faceMeshInterpreter == null) {
+        return false;
+      }
+      return processBufferInternal(yBuffer, width, height, stride, timestampNs, null);
+    } catch (RuntimeException error) {
+      return false;
+    } finally {
+      INFERENCE_LOCK.unlock();
+    }
+  }
+
+  private static boolean processBufferInternal(
+      ByteBuffer yBuffer, int width, int height, int stride, long timestampNs,
+      @Nullable Image image) {
+    final long inferenceStartedNs = System.nanoTime();
+
+    final FaceCandidate faceCandidate =
+        findFaceCandidateFast(image, yBuffer, width, height, stride);
+    if (!faceCandidate.faceLike) {
+      final float inferenceMs =
+          (System.nanoTime() - inferenceStartedNs) / 1_000_000.0f;
+      return NativeBridge.nativeSubmitModelResult(
+          new float[LANDMARK_FLOAT_COUNT],
+          null,
+          width,
+          height,
+          timestampNs,
+          inferenceMs);
+    }
+
+    final FaceMeshOutput faceMeshOutput =
+        runFaceMesh(yBuffer, width, height, stride, faceCandidate);
+    if (faceMeshOutput == null ||
+        (!faceMeshOutput.facePresent &&
+            faceCandidate.confidence < STRONG_FACE_CANDIDATE_CONFIDENCE)) {
+      final float inferenceMs =
+          (System.nanoTime() - inferenceStartedNs) / 1_000_000.0f;
+      return NativeBridge.nativeSubmitModelResult(
+          new float[LANDMARK_FLOAT_COUNT],
+          null,
+          width,
+          height,
+          timestampNs,
+          inferenceMs);
+    }
+    final float[] landmarks = faceMeshOutput.facePresent
+        ? faceMeshOutput.landmarks
+        : makeCanonicalFaceLandmarks(faceCandidate, width, height);
+
+    float[] embedding = mobileFaceNetInterpreter == null
+        ? null
+        : runMobileFaceNet(yBuffer, width, height, stride);
+    if (embedding == null) {
+      embedding = runDeterministicEmbedding(yBuffer, width, height, stride);
+    }
+    final float inferenceMs =
+        (System.nanoTime() - inferenceStartedNs) / 1_000_000.0f;
+
+    return NativeBridge.nativeSubmitModelResult(
+        landmarks, embedding, width, height, timestampNs, inferenceMs);
+  }
+
+  private static FaceCandidate findFaceCandidateFast(
+      @Nullable Image image, ByteBuffer yBuffer, int width, int height, int stride) {
+    // If we have no Image (copied buffer path), use skin-tone only detection
+    if (image == null || image.getPlanes().length < 3) {
+      if (!frameHasEnoughTexture(yBuffer, width, height, stride)) {
+        return FaceCandidate.none();
+      }
+      // Try single-orientation Android detector with front camera default (270°)
+      final FaceCandidate detectorCandidate =
+          detectFaceCandidateAtOrientation(yBuffer, width, height, stride, 270);
+      if (detectorCandidate.faceLike) {
+        return detectorCandidate;
+      }
+      return FaceCandidate.none();
+    }
+    // Full path with chroma (single orientation for speed)
+    if (!frameHasEnoughTexture(yBuffer, width, height, stride)) {
+      return FaceCandidate.none();
+    }
+
+    final FaceCandidate detectorCandidate =
+        detectFaceCandidateAtOrientation(yBuffer, width, height, stride, 270);
+    if (detectorCandidate.faceLike) {
+      return detectorCandidate;
+    }
+
+    // Fall back to chroma-based detection
+    final Image.Plane uPlane = image.getPlanes()[1];
+    final Image.Plane vPlane = image.getPlanes()[2];
+    final ByteBuffer u = uPlane.getBuffer().duplicate();
+    final ByteBuffer v = vPlane.getBuffer().duplicate();
+    final int uRowStride = uPlane.getRowStride();
+    final int vRowStride = vPlane.getRowStride();
+    final int uPixelStride = uPlane.getPixelStride();
+    final int vPixelStride = vPlane.getPixelStride();
+    final int chromaWidth = Math.max(1, width / 2);
+    final int chromaHeight = Math.max(1, height / 2);
+    final int startX = chromaWidth / 10;
+    final int endX = chromaWidth - startX;
+    final int startY = chromaHeight / 10;
+    final int endY = chromaHeight - Math.max(1, chromaHeight / 18);
+    final int stepX = Math.max(1, chromaWidth / 36);
+    final int stepY = Math.max(1, chromaHeight / 36);
+    int samples = 0;
+    int skinLike = 0;
+    int minX = width;
+    int minY = height;
+    int maxX = 0;
+    int maxY = 0;
+
+    for (int y = startY; y < endY; y += stepY) {
+      for (int x = startX; x < endX; x += stepX) {
+        final int uIndex = (y * uRowStride) + (x * uPixelStride);
+        final int vIndex = (y * vRowStride) + (x * vPixelStride);
+        if (uIndex < 0 || uIndex >= u.capacity() || vIndex < 0 || vIndex >= v.capacity()) {
+          continue;
+        }
+        final int cb = u.get(uIndex) & 0xff;
+        final int cr = v.get(vIndex) & 0xff;
+        samples++;
+        if (isSkinLike(cb, cr)) {
+          skinLike++;
+          final int fullX = Math.min(width - 1, x * 2);
+          final int fullY = Math.min(height - 1, y * 2);
+          minX = Math.min(minX, fullX);
+          minY = Math.min(minY, fullY);
+          maxX = Math.max(maxX, fullX);
+          maxY = Math.max(maxY, fullY);
+        }
+      }
+    }
+
+    if (samples <= 0 || skinLike < 8) {
+      return FaceCandidate.none();
+    }
+
+    final float skinRatio = skinLike / (float) samples;
+    if (skinRatio < 0.012f || minX >= maxX || minY >= maxY) {
+      return FaceCandidate.none();
+    }
+
+    final int boxWidth = maxX - minX;
+    final int boxHeight = maxY - minY;
+    final float widthRatio = boxWidth / (float) width;
+    final float heightRatio = boxHeight / (float) height;
+    final float aspect = boxWidth / (float) Math.max(1, boxHeight);
+    if (widthRatio < 0.07f || widthRatio > 0.82f ||
+        heightRatio < 0.045f || heightRatio > 0.88f ||
+        aspect < 0.38f || aspect > 1.55f) {
+      return FaceCandidate.none();
+    }
+
+    final float centerX = (minX + maxX) * 0.5f;
+    final float centerY = (minY + maxY) * 0.5f;
+    if (centerX < width * 0.12f || centerX > width * 0.88f ||
+        centerY < height * 0.08f || centerY > height * 0.98f) {
+      return FaceCandidate.none();
+    }
+
+    final FaceDetail detail =
+        measureFaceDetail(yBuffer, width, height, stride, minX, minY, maxX, maxY);
+    if (!detail.hasFacialContrast) {
+      return FaceCandidate.none();
+    }
+
+    final int padded = Math.round(Math.max(boxWidth, boxHeight) * 1.55f);
+    final int roiSize = Math.max(32, Math.min(Math.max(width, height), padded));
+    final int roiLeft = clamp(Math.round(centerX - (roiSize * 0.5f)), 0, Math.max(0, width - roiSize));
+    final int roiTop = clamp(Math.round(centerY - (roiSize * 0.48f)), 0, Math.max(0, height - roiSize));
+    final int roiRight = Math.min(width, roiLeft + roiSize);
+    final int roiBottom = Math.min(height, roiTop + roiSize);
+    final float confidence = Math.min(
+        1.0f,
+        (skinRatio * 4.5f) +
+            Math.min(0.28f, detail.darkFeatureRatio * 4.0f) +
+            Math.min(0.22f, detail.edgeScore / 42.0f) +
+            (widthRatio >= 0.14f && heightRatio >= 0.10f ? 0.16f : 0.0f));
+
+    return new FaceCandidate(
+        true, minX, minY, maxX, maxY, roiLeft, roiTop, roiRight, roiBottom, confidence);
   }
 
   private static Interpreter createInterpreter(String path) throws IOException {
