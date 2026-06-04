@@ -71,6 +71,20 @@ type NativeBridgeModule = {
 type NativeChallenge = 'NONE' | 'BLINK' | 'SMILE' | 'TURN_LEFT' | 'TURN_RIGHT';
 
 const MODEL_PATH = '/sdcard/Download/mobilefacenet.tflite';
+const LIVENESS_STATE_NAMES = [
+  'IDLE',
+  'DETECTED',
+  'CHALLENGE_ACTIVE',
+  'LIVENESS_PASS',
+  'LIVENESS_FAIL',
+] as const;
+const LIVENESS_CHALLENGE_NAMES = [
+  'NONE',
+  'BLINK',
+  'SMILE',
+  'TURN_LEFT',
+  'TURN_RIGHT',
+] as const;
 
 const styles = StyleSheet.create({
   root: {flex: 1, backgroundColor: '#0f172a'},
@@ -184,6 +198,10 @@ function formatResult(result: OfflineFaceAuthResult): string {
   const preview = isUsableEmbedding(result)
     ? embeddingArray.slice(0, 16).map((value) => value.toFixed(6))
     : [];
+  const livenessStateName =
+    LIVENESS_STATE_NAMES[result.livenessState ?? 0] ?? 'UNKNOWN';
+  const livenessChallengeName =
+    LIVENESS_CHALLENGE_NAMES[result.livenessChallenge ?? 0] ?? 'UNKNOWN';
   return JSON.stringify(
     {
       accepted: result.accepted,
@@ -197,7 +215,9 @@ function formatResult(result: OfflineFaceAuthResult): string {
       faceMeshThreadCount: result.faceMeshThreadCount,
       mobileFaceNetThreadCount: result.mobileFaceNetThreadCount,
       livenessState: result.livenessState,
+      livenessStateName,
       livenessChallenge: result.livenessChallenge,
+      livenessChallengeName,
       faceDetected: result.faceDetected,
       ear: result.ear,
       mar: result.mar,
