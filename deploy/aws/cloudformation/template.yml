@@ -1,2 +1,95 @@
-# Path: OfflineFaceAuth/deploy/aws/cloudformation/template.yml
-# Purpose: CloudFormation template provisioning S3 bucket, Lambda functions, IAM roles, API Gateway for sync endpoint.
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  Nayan OfflineFaceAuth – AWS infrastructure: S3 bucket, Lambda functions (authorizer + sync-handler),
+  IAM execution roles, and API Gateway endpoint for attendance sync.
+
+Parameters:
+  Environment:
+    Type: String
+    Default: dev
+    AllowedValues: [dev, staging, prod]
+  LambdaMemorySize:
+    Type: Number
+    Default: 256
+
+Resources:
+
+  AttendanceBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub "nayan-attendance-sync-${Environment}"
+      VersioningConfiguration:
+        Status: Enabled
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      LifecycleConfiguration:
+        Rules:
+          - Id: TransitionToGlacier
+            Status: Enabled
+            Transitions:
+              - TransitionInDays: 90
+                StorageClass: GLACIER
+            ExpirationInDays: 365
+
+  LambdaExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "NayanLambdaExecutionRole-${Environment}"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: S3AccessPolicy
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:PutObject
+                  - s3:GetObject
+                  - s3:HeadObject
+                Resource: !Sub "arn:aws:s3:::nayan-attendance-sync-${Environment}/*"
+
+  AuthorizerFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub "NayanAuthorizer-${Environment}"
+      Runtime: nodejs18.x
+      Handler: index.handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      MemorySize: !Ref LambdaMemorySize
+      Timeout: 10
+      Environment:
+        Variables:
+          ATTENDANCE_BUCKET_NAME: !Ref AttendanceBucket
+          NODE_ENV: !Ref Environment
+
+  SyncHandlerFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub "NayanSyncHandler-${Environment}"
+      Runtime: nodejs18.x
+      Handler: index.handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      MemorySize: !Ref LambdaMemorySize
+      Timeout: 30
+      Environment:
+        Variables:
+          ATTENDANCE_BUCKET_NAME: !Ref AttendanceBucket
+          NODE_ENV: !Ref Environment
+
+Outputs:
+  BucketName:
+    Value: !Ref AttendanceBucket
+  AuthorizerFunctionArn:
+    Value: !GetAtt AuthorizerFunction.Arn
+  SyncHandlerFunctionArn:
+    Value: !GetAtt SyncHandlerFunction.Arn

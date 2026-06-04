@@ -1,2 +1,30 @@
-# Path: OfflineFaceAuth/deploy/aws/s3/lifecycle-rules.json
-# Purpose: S3 lifecycle rules with transition to Glacier after 90 days, expire after 365 days for cost optimization.
+{
+  "Rules": [
+    {
+      "ID": "TransitionToGlacier",
+      "Status": "Enabled",
+      "Filter": {
+        "Prefix": "attendance/"
+      },
+      "Transitions": [
+        {
+          "Days": 90,
+          "StorageClass": "GLACIER"
+        }
+      ],
+      "Expiration": {
+        "Days": 365
+      }
+    },
+    {
+      "ID": "AbortIncompleteMultipartUploads",
+      "Status": "Enabled",
+      "Filter": {
+        "Prefix": ""
+      },
+      "AbortIncompleteMultipartUpload": {
+        "DaysAfterInitiation": 7
+      }
+    }
+  ]
+}
