@@ -1,2 +1,29 @@
-# Path: OfflineFaceAuth/deploy/aws/s3/bucket-policy.json
-# Purpose: S3 bucket policy restricting write access to Lambda execution role, enabling server-side encryption (SSE-S3).
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "AllowLambdaWrite",
+      "Effect": "Allow",
+      "Principal": {
+        "AWS": "arn:aws:iam::ACCOUNT_ID:role/NayanLambdaExecutionRole"
+      },
+      "Action": [
+        "s3:PutObject",
+        "s3:PutObjectAcl"
+      ],
+      "Resource": "arn:aws:s3:::nayan-attendance-sync/*"
+    },
+    {
+      "Sid": "DenyPublicRead",
+      "Effect": "Deny",
+      "Principal": "*",
+      "Action": "s3:GetObject",
+      "Resource": "arn:aws:s3:::nayan-attendance-sync/*",
+      "Condition": {
+        "Bool": {
+          "aws:SecureTransport": "false"
+        }
+      }
+    }
+  ]
+}

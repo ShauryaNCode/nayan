@@ -1,2 +1,18 @@
-# Path: OfflineFaceAuth/deploy/aws/lambda/sync-handler/package.json
-# Purpose: Lambda handler dependencies with minimal aws-sdk (bundled), uuid for conflict detection.
+{
+  "name": "nayan-sync-handler",
+  "version": "1.0.0",
+  "description": "AWS Lambda sync handler receiving NDJSON attendance batches, validating, writing to S3, returning ACK/409/500.",
+  "main": "index.js",
+  "private": true,
+  "scripts": {
+    "deploy": "zip -r sync-handler.zip . && aws lambda update-function-code --function-name NayanSyncHandler --zip-file fileb://sync-handler.zip"
+  },
+  "dependencies": {
+    "@aws-sdk/client-s3": "^3.583.0",
+    "@aws-sdk/lib-storage": "^3.583.0",
+    "uuid": "^9.0.0"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

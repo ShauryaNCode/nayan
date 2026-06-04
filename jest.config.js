@@ -13,5 +13,7 @@ module.exports = {
     '^@types/(.*)$': '<rootDir>/src/types/$1',
     '^@utils/(.*)$': '<rootDir>/src/utils/$1',
   },
-  testPathIgnorePatterns: ['/node_modules/'],
+  testPathIgnorePatterns: ['/node_modules/', '<rootDir>/deploy/'],
+  modulePathIgnorePatterns: ['<rootDir>/deploy/'],
+  watchPathIgnorePatterns: ['<rootDir>/deploy/', '<rootDir>/node_modules/'],
 };
