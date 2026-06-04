@@ -98,11 +98,22 @@ const mockNativeBridge = {
   }),
 };
 
+const mockLSHModule = {
+  loadHyperplanes: jest.fn(async () => undefined),
+  computeBucketKeys: jest.fn(async () => ['0_1', '1_2', '2_3', '3_4']),
+};
+
 jest.mock('react-native', () => ({
   NativeModules: {
     NativeBridge: mockNativeBridge,
     SecureEnclaveManager: undefined,
     EmbeddingCrypto: undefined,
+    LSHModule: mockLSHModule,
+  },
+  TurboModuleRegistry: {
+    get: jest.fn((name: string) =>
+      name === 'LSHModule' ? mockLSHModule : null,
+    ),
   },
   Platform: {
     OS: 'android',
@@ -129,6 +140,7 @@ type PersonnelRow = {
 
 const mockPersonnelRows = new Map<string, PersonnelRow>();
 const mockConsentRows: Array<Record<string, unknown>> = [];
+const mockLshRows: Array<Record<string, unknown>> = [];
 
 const mockFakeDb = {
   executeSync: jest.fn((sql: string, params: unknown[] = []) => {
@@ -137,9 +149,34 @@ const mockFakeDb = {
     if (
       normalized === 'BEGIN IMMEDIATE;' ||
       normalized === 'COMMIT;' ||
-      normalized === 'ROLLBACK;'
+      normalized === 'ROLLBACK;' ||
+      normalized === 'PRAGMA defer_foreign_keys=ON;'
     ) {
       return {rows: [], rowsAffected: 0};
+    }
+
+    if (normalized === 'PRAGMA table_info(lsh_index);') {
+      return {
+        rows: [
+          {name: 'bucket_key'},
+          {name: 'personnel_id'},
+          {name: 'band_index'},
+          {name: 'signature'},
+          {name: 'updated_at'},
+        ],
+        rowsAffected: 0,
+      };
+    }
+
+    if (normalized.startsWith('INSERT INTO lsh_index')) {
+      mockLshRows.push({
+        personnel_id: params[0],
+        bucket_key: params[1],
+        band_index: params[2],
+        signature: params[3],
+        updated_at: params[4],
+      });
+      return {rows: [], rowsAffected: 1};
     }
 
     if (normalized.startsWith('INSERT INTO personnel')) {
@@ -219,6 +256,12 @@ function normalizedHalfVector(): Float32Array {
 function vectorWithValue(value: number): Float32Array {
   const embedding = new Float32Array(128);
   embedding.fill(value);
+  const norm = Math.sqrt(
+    Array.from(embedding).reduce((sum, entry) => sum + entry * entry, 0),
+  );
+  for (let i = 0; i < embedding.length; i += 1) {
+    embedding[i] /= norm;
+  }
   return embedding;
 }
 
@@ -247,6 +290,7 @@ beforeEach(() => {
   mockPersonKeys.clear();
   mockPersonnelRows.clear();
   mockConsentRows.length = 0;
+  mockLshRows.length = 0;
 });
 
 describe('T3.2 per-person embedding crypto', () => {

@@ -1,5 +1,6 @@
 #include "FrameProcessorPlugin.h"
 
+#include <algorithm>
 #include <chrono>
 #include <cstring>
 #include <stdexcept>
@@ -8,8 +9,14 @@
 #if defined(__APPLE__)
 #include <CoreVideo/CoreVideo.h>
 #endif
+#if defined(__ANDROID__)
+#include <malloc.h>
+#endif
 
 #include "../clahe/CLAHEEngine.h"
+#include "../clahe/ColorSpaceConverter.h"
+#include "../antispoof/DepthCueChecker.h"
+#include "../antispoof/FFTTextureAnalyzer.h"
 #include "../common/MathUtils.h"
 #include "../inference/EmbeddingAverager.h"
 #include "../inference/TFLiteInterpreterManager.h"
@@ -18,6 +25,18 @@ namespace offlineface::frameprocessor {
 namespace {
 using namespace std::chrono_literals;
 using Clock = std::chrono::steady_clock;
+
+float CurrentHeapUsageMb() {
+#if defined(__ANDROID__) && __ANDROID_API__ >= 31
+  const struct mallinfo2 info = mallinfo2();
+  return static_cast<float>(info.uordblks) / (1024.0f * 1024.0f);
+#elif defined(__ANDROID__)
+  const struct mallinfo info = mallinfo();
+  return static_cast<float>(info.uordblks) / (1024.0f * 1024.0f);
+#else
+  return 0.0f;
+#endif
+}
 }
 
 FrameProcessorPlugin::FrameProcessorPlugin(
@@ -74,7 +93,8 @@ bool FrameProcessorPlugin::SubmitExternalModelResult(
     std::size_t embeddingValueCount,
     uint32_t width,
     uint32_t height,
-    uint64_t timestampNs) {
+    uint64_t timestampNs,
+    float externalInferenceMs) {
   if (landmarkValues == nullptr || landmarkValueCount < 468U * 3U ||
       width == 0U || height == 0U) {
     return false;
@@ -82,6 +102,13 @@ bool FrameProcessorPlugin::SubmitExternalModelResult(
 
   const auto faceMeshResult = interpreterManager_->RunFaceMeshLandmarks(
       landmarkValues, landmarkValueCount, width, height);
+  const auto depthCueResult = antispoof::CheckDepthCueFromLandmarks(
+      landmarkValues, landmarkValueCount, width, height);
+  const bool passiveDepthOk = !depthCueResult.faceDetected ||
+                              !depthCueResult.spoofDetected;
+  const auto startedAt = Clock::now();
+  const uint64_t frameId =
+      framesProcessed_.fetch_add(1U, std::memory_order_acq_rel) + 1U;
 
   offlineface::landmarks::FaceMetrics metrics{};
   metrics.faceDetected = faceMeshResult.faceDetected;
@@ -90,19 +117,26 @@ bool FrameProcessorPlugin::SubmitExternalModelResult(
   metrics.yaw = faceMeshResult.yawDegrees;
   metrics.pitch = faceMeshResult.pitchDegrees;
   metrics.roll = faceMeshResult.rollDegrees;
+  if (faceMeshResult.faceDetected) {
+    framesWithFace_.fetch_add(1U, std::memory_order_acq_rel);
+  }
 
   offlineface::landmarks::LivenessSnapshot livenessSnapshot{};
   {
     std::lock_guard<std::mutex> lock(fsmMutex_);
-    livenessSnapshot = livenessFsm_.Update({metrics, Clock::now(), true, true});
+    livenessSnapshot =
+        livenessFsm_.Update({metrics, Clock::now(), true, passiveDepthOk});
   }
   livenessState_.store(
       static_cast<int>(ToNativeState(livenessSnapshot.state)),
       std::memory_order_release);
 
+  const bool fsmPassed =
+      ToNativeState(livenessSnapshot.state) == NativeLivenessState::kLivenessPass;
   const bool canUseEmbedding =
       embeddingValues != nullptr && embeddingValueCount == 128U &&
-      faceMeshResult.faceDetected && ShouldRunMobileFaceNet();
+      faceMeshResult.faceDetected && fsmPassed &&
+      !embeddingWrittenThisSession_.load(std::memory_order_acquire);
 
   std::vector<float> embedding;
   if (canUseEmbedding) {
@@ -110,12 +144,31 @@ bool FrameProcessorPlugin::SubmitExternalModelResult(
     offlineface::common::NormalizeL2(embedding.data(), embedding.size());
   }
 
+  std::vector<float> persistentEmbedding;
+  bool persistentEmbeddingValid = false;
+  uint64_t persistentEmbeddingFrameId = 0;
+  {
+    std::lock_guard<std::mutex> lock(resultMutex_);
+    if (canUseEmbedding && !embedding.empty()) {
+      latestEmbedding_ = embeddingAverager_->PushEmbedding(timestampNs, embedding);
+      latestEmbeddingValid_ = !latestEmbedding_.empty();
+      latestEmbeddingFrameId_ = frameId;
+      embeddingWrittenThisSession_.store(
+          latestEmbeddingValid_, std::memory_order_release);
+    } else if (ToNativeState(livenessSnapshot.state) == NativeLivenessState::kIdle) {
+      embeddingWrittenThisSession_.store(false, std::memory_order_release);
+    }
+    persistentEmbedding = latestEmbedding_;
+    persistentEmbeddingValid = latestEmbeddingValid_;
+    persistentEmbeddingFrameId = latestEmbeddingFrameId_;
+  }
+
   const auto threadBudget = interpreterManager_->GetThreadBudget();
   ProcessedFrameResult nextResult{};
-  nextResult.accepted = canUseEmbedding && !embedding.empty();
+  nextResult.accepted = persistentEmbeddingValid;
   nextResult.externalModelProcessed = true;
   nextResult.faceMeshProcessed = faceMeshResult.faceDetected;
-  nextResult.mobileFaceNetProcessed = canUseEmbedding;
+  nextResult.mobileFaceNetProcessed = canUseEmbedding || persistentEmbeddingValid;
   nextResult.timestampNs = timestampNs;
   nextResult.droppedFrameCount =
       droppedFrameCount_.load(std::memory_order_acquire);
@@ -132,9 +185,20 @@ bool FrameProcessorPlugin::SubmitExternalModelResult(
   nextResult.yaw = faceMeshResult.yawDegrees;
   nextResult.pitch = faceMeshResult.pitchDegrees;
   nextResult.roll = faceMeshResult.rollDegrees;
-  nextResult.embedding = canUseEmbedding
-                             ? embeddingAverager_->PushEmbedding(timestampNs, embedding)
-                             : std::vector<float>{};
+  nextResult.inferenceMs =
+      std::max(0.0f, externalInferenceMs) +
+      std::chrono::duration<float, std::milli>(Clock::now() - startedAt).count();
+  nextResult.ramMb = CurrentHeapUsageMb();
+  nextResult.passiveTextureOk = true;
+  nextResult.passiveDepthOk = passiveDepthOk;
+  nextResult.passiveDepthRatio = depthCueResult.faceBoxToEyeRatio;
+  nextResult.framesProcessed =
+      framesProcessed_.load(std::memory_order_acquire);
+  nextResult.framesWithFace =
+      framesWithFace_.load(std::memory_order_acquire);
+  nextResult.embeddingValid = persistentEmbeddingValid;
+  nextResult.embeddingFrameId = persistentEmbeddingFrameId;
+  nextResult.embedding = std::move(persistentEmbedding);
   nextResult.sharpnessScore = 0.0f;
 
   {
@@ -206,6 +270,16 @@ void FrameProcessorPlugin::SetLivenessState(NativeLivenessState state) {
   } else if (state == NativeLivenessState::kIdle) {
     std::lock_guard<std::mutex> lock(fsmMutex_);
     livenessFsm_.Reset();
+    std::lock_guard<std::mutex> resultLock(resultMutex_);
+    latestEmbedding_.clear();
+    latestEmbeddingValid_ = false;
+    latestEmbeddingFrameId_ = 0;
+    latestResult_.accepted = false;
+    latestResult_.embeddingValid = false;
+    latestResult_.embeddingFrameId = 0;
+    latestResult_.embedding.clear();
+    latestResult_.mobileFaceNetProcessed = false;
+    embeddingWrittenThisSession_.store(false, std::memory_order_release);
   }
   livenessState_.store(static_cast<int>(state), std::memory_order_release);
 }
@@ -215,6 +289,18 @@ void FrameProcessorPlugin::SetLivenessChallenge(
   std::lock_guard<std::mutex> lock(fsmMutex_);
   if (challenge == NativeLivenessChallenge::kNone) {
     livenessFsm_.Reset();
+    {
+      std::lock_guard<std::mutex> resultLock(resultMutex_);
+      latestEmbedding_.clear();
+      latestEmbeddingValid_ = false;
+      latestEmbeddingFrameId_ = 0;
+      latestResult_.accepted = false;
+      latestResult_.embeddingValid = false;
+      latestResult_.embeddingFrameId = 0;
+      latestResult_.embedding.clear();
+      latestResult_.mobileFaceNetProcessed = false;
+      embeddingWrittenThisSession_.store(false, std::memory_order_release);
+    }
     livenessState_.store(
         static_cast<int>(NativeLivenessState::kIdle),
         std::memory_order_release);
@@ -222,6 +308,18 @@ void FrameProcessorPlugin::SetLivenessChallenge(
   }
 
   livenessFsm_.StartChallenge(ToFSMChallenge(challenge));
+  {
+    std::lock_guard<std::mutex> resultLock(resultMutex_);
+    latestEmbedding_.clear();
+    latestEmbeddingValid_ = false;
+    latestEmbeddingFrameId_ = 0;
+    latestResult_.accepted = false;
+    latestResult_.embeddingValid = false;
+    latestResult_.embeddingFrameId = 0;
+    latestResult_.embedding.clear();
+    latestResult_.mobileFaceNetProcessed = false;
+    embeddingWrittenThisSession_.store(false, std::memory_order_release);
+  }
   livenessState_.store(
       static_cast<int>(NativeLivenessState::kChallengeActive),
       std::memory_order_release);
@@ -287,13 +385,49 @@ void FrameProcessorPlugin::ProcessCurrentFrame(FrameBuffer* frame) {
   const uint32_t height = frame->height;
   const uint32_t stride = frame->stride;
   const uint64_t timestampNs = frame->timestampNs;
+  const uint64_t frameId =
+      framesProcessed_.fetch_add(1U, std::memory_order_acq_rel) + 1U;
+  const auto startedAt = Clock::now();
 
-  std::vector<uint8_t> enhanced(
-      static_cast<std::size_t>(width) * static_cast<std::size_t>(height), 0U);
-  claheEngine_->Apply(frame->data, width, height, stride, enhanced.data());
+  const std::size_t pixelCount =
+      static_cast<std::size_t>(width) * static_cast<std::size_t>(height);
+  // Reuse pooled buffers; resize only when frame dimensions change.
+  if (width != cachedWidth_ || height != cachedHeight_) {
+    cachedWidth_ = width;
+    cachedHeight_ = height;
+    rgb_.resize(pixelCount * 3U);
+    lab_.resize(pixelCount * 3U);
+    lChannel_.resize(pixelCount);
+    enhancedL_.resize(pixelCount);
+    enhancedRgb_.resize(pixelCount * 3U);
+    enhanced_.resize(pixelCount);
+  }
+  std::memset(rgb_.data(), 0, rgb_.size());
+  std::fill(lab_.begin(), lab_.end(), 0.0f);
+  std::memset(lChannel_.data(), 0, lChannel_.size());
+  std::memset(enhancedL_.data(), 0, enhancedL_.size());
+  std::memset(enhancedRgb_.data(), 0, enhancedRgb_.size());
+  std::memset(enhanced_.data(), 0, enhanced_.size());
+  offlineface::clahe::GrayToRgb(
+      frame->data, width, height, stride, rgb_.data());
+  offlineface::clahe::RgbToLab(rgb_.data(), width, height, lab_.data());
+  offlineface::clahe::ExtractLChannel(lab_.data(), width, height, lChannel_.data());
+  claheEngine_->Apply(lChannel_.data(), width, height, width, enhancedL_.data());
+  offlineface::clahe::ReplaceLChannel(
+      enhancedL_.data(), width, height, lab_.data());
+  offlineface::clahe::LabToRgb(lab_.data(), width, height, enhancedRgb_.data());
+  offlineface::clahe::RgbToGray(enhancedRgb_.data(), width, height, enhanced_.data());
 
   const auto faceMeshResult =
-      interpreterManager_->RunFaceMesh(enhanced.data(), width, height, width);
+      interpreterManager_->RunFaceMesh(enhanced_.data(), width, height, width);
+  const auto depthCueResult = antispoof::DepthCueResult{};
+  const auto fftResult = faceMeshResult.faceDetected
+                             ? ::antispoof::AnalyzeFaceCropFixed(
+                                   enhanced_.data(),
+                                   static_cast<int>(width),
+                                   static_cast<int>(height),
+                                   static_cast<int>(width))
+                             : ::antispoof::FFTTextureResult{};
   offlineface::landmarks::FaceMetrics metrics{};
   metrics.faceDetected = faceMeshResult.faceDetected;
   metrics.ear = faceMeshResult.eyeAspectRatio;
@@ -301,32 +435,55 @@ void FrameProcessorPlugin::ProcessCurrentFrame(FrameBuffer* frame) {
   metrics.yaw = faceMeshResult.yawDegrees;
   metrics.pitch = faceMeshResult.pitchDegrees;
   metrics.roll = faceMeshResult.rollDegrees;
+  if (faceMeshResult.faceDetected) {
+    framesWithFace_.fetch_add(1U, std::memory_order_acq_rel);
+  }
 
   offlineface::landmarks::LivenessSnapshot livenessSnapshot{};
   {
     std::lock_guard<std::mutex> lock(fsmMutex_);
     livenessSnapshot = livenessFsm_.Update(
-        {metrics, Clock::now(), true, true});
+        {metrics, Clock::now(), !fftResult.spoofDetected, !depthCueResult.spoofDetected});
   }
   livenessState_.store(
       static_cast<int>(ToNativeState(livenessSnapshot.state)),
       std::memory_order_release);
 
   const bool runMobileFaceNet =
-      faceMeshResult.faceDetected && ShouldRunMobileFaceNet();
+      faceMeshResult.faceDetected && ShouldRunMobileFaceNet() &&
+      !embeddingWrittenThisSession_.load(std::memory_order_acquire);
 
   std::vector<float> embedding;
   if (runMobileFaceNet) {
     embedding =
-        interpreterManager_->RunEmbedding(enhanced.data(), width, height, width);
+        interpreterManager_->RunEmbedding(enhanced_.data(), width, height, width);
+  }
+
+  std::vector<float> persistentEmbedding;
+  bool persistentEmbeddingValid = false;
+  uint64_t persistentEmbeddingFrameId = 0;
+  {
+    std::lock_guard<std::mutex> lock(resultMutex_);
+    if (runMobileFaceNet && !embedding.empty()) {
+      latestEmbedding_ = embeddingAverager_->PushEmbedding(timestampNs, embedding);
+      latestEmbeddingValid_ = !latestEmbedding_.empty();
+      latestEmbeddingFrameId_ = frameId;
+      embeddingWrittenThisSession_.store(
+          latestEmbeddingValid_, std::memory_order_release);
+    } else if (ToNativeState(livenessSnapshot.state) == NativeLivenessState::kIdle) {
+      embeddingWrittenThisSession_.store(false, std::memory_order_release);
+    }
+    persistentEmbedding = latestEmbedding_;
+    persistentEmbeddingValid = latestEmbeddingValid_;
+    persistentEmbeddingFrameId = latestEmbeddingFrameId_;
   }
 
   const auto threadBudget = interpreterManager_->GetThreadBudget();
   ProcessedFrameResult nextResult{};
-  nextResult.accepted = runMobileFaceNet && !embedding.empty();
+  nextResult.accepted = persistentEmbeddingValid;
   nextResult.externalModelProcessed = false;
   nextResult.faceMeshProcessed = faceMeshResult.faceDetected;
-  nextResult.mobileFaceNetProcessed = runMobileFaceNet;
+  nextResult.mobileFaceNetProcessed = runMobileFaceNet || persistentEmbeddingValid;
   nextResult.timestampNs = timestampNs;
   nextResult.droppedFrameCount =
       droppedFrameCount_.load(std::memory_order_acquire);
@@ -344,11 +501,25 @@ void FrameProcessorPlugin::ProcessCurrentFrame(FrameBuffer* frame) {
   nextResult.yaw = faceMeshResult.yawDegrees;
   nextResult.pitch = faceMeshResult.pitchDegrees;
   nextResult.roll = faceMeshResult.rollDegrees;
-  nextResult.embedding = runMobileFaceNet
-                             ? embeddingAverager_->PushEmbedding(timestampNs, embedding)
-                             : std::vector<float>{};
+  nextResult.inferenceMs =
+      std::chrono::duration<float, std::milli>(Clock::now() - startedAt).count();
+  nextResult.ramMb = CurrentHeapUsageMb();
+  nextResult.fftHighFrequencyRatio =
+      static_cast<float>(fftResult.highFrequencyRatioQ10) / 1024.0f;
+  nextResult.fftMoireScore =
+      static_cast<float>(fftResult.moireScoreQ10) / 1024.0f;
+  nextResult.passiveTextureOk = !fftResult.spoofDetected;
+  nextResult.passiveDepthOk = !depthCueResult.spoofDetected;
+  nextResult.passiveDepthRatio = depthCueResult.faceBoxToEyeRatio;
+  nextResult.framesProcessed =
+      framesProcessed_.load(std::memory_order_acquire);
+  nextResult.framesWithFace =
+      framesWithFace_.load(std::memory_order_acquire);
+  nextResult.embeddingValid = persistentEmbeddingValid;
+  nextResult.embeddingFrameId = persistentEmbeddingFrameId;
+  nextResult.embedding = std::move(persistentEmbedding);
   nextResult.sharpnessScore =
-      ComputeSharpness(enhanced.data(), width, height, width);
+      ComputeSharpness(enhanced_.data(), width, height, width);
 
   {
     std::lock_guard<std::mutex> lock(resultMutex_);
@@ -370,6 +541,12 @@ void FrameProcessorPlugin::ProcessCurrentFrame(FrameBuffer* frame) {
 NativeLivenessState FrameProcessorPlugin::GetLivenessState() const {
   return static_cast<NativeLivenessState>(
       livenessState_.load(std::memory_order_acquire));
+}
+
+NativeLivenessChallenge FrameProcessorPlugin::GetLivenessChallenge() const {
+  std::lock_guard<std::mutex> lock(fsmMutex_);
+  return static_cast<NativeLivenessChallenge>(
+      static_cast<int>(livenessFsm_.Challenge()));
 }
 
 bool FrameProcessorPlugin::ShouldRunMobileFaceNet() const {

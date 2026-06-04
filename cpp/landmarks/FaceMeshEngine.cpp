@@ -17,8 +17,22 @@
 #include <tensorflow/lite/interpreter.h>
 #include <tensorflow/lite/kernels/register.h>
 #include <tensorflow/lite/model.h>
+#if defined(__APPLE__) && __has_include(<tensorflow/lite/delegates/coreml/coreml_delegate.h>)
+#define NAYAN_HAS_COREML_DELEGATE 1
+#include <tensorflow/lite/delegates/coreml/coreml_delegate.h>
+#else
+#define NAYAN_HAS_COREML_DELEGATE 0
+#endif
+#if defined(__APPLE__) && __has_include(<tensorflow/lite/delegates/gpu/metal_delegate.h>)
+#define NAYAN_HAS_METAL_DELEGATE 1
+#include <tensorflow/lite/delegates/gpu/metal_delegate.h>
+#else
+#define NAYAN_HAS_METAL_DELEGATE 0
+#endif
 #else
 #define NAYAN_HAS_TFLITE 0
+#define NAYAN_HAS_COREML_DELEGATE 0
+#define NAYAN_HAS_METAL_DELEGATE 0
 #endif
 
 namespace offlineface::landmarks {
@@ -343,10 +357,42 @@ HeadPose SolvePnPLevenbergMarquardt(const std::array<Vec3, 6>& objectPoints,
 }
 
 bool LooksLikeValidLandmarks(const FaceLandmarks& landmarks) {
-  const float eyeDistance = Distance3D(landmarks[33], landmarks[263]);
-  const float faceHeight = Distance3D(landmarks[1], landmarks[152]);
+  float minX = std::numeric_limits<float>::max();
+  float minY = std::numeric_limits<float>::max();
+  float maxX = std::numeric_limits<float>::lowest();
+  float maxY = std::numeric_limits<float>::lowest();
+  for (const Landmark3D& point : landmarks) {
+    if (!std::isfinite(point.x) || !std::isfinite(point.y) ||
+        !std::isfinite(point.z)) {
+      return false;
+    }
+    minX = std::min(minX, point.x);
+    minY = std::min(minY, point.y);
+    maxX = std::max(maxX, point.x);
+    maxY = std::max(maxY, point.y);
+  }
+
+  const float eyeDistance = Distance2D(landmarks[33], landmarks[263]);
+  const float faceHeight = Distance2D(landmarks[1], landmarks[152]);
+  const float boxWidth = maxX - minX;
+  const float boxHeight = maxY - minY;
+  const float boxToEye = std::max(boxWidth, boxHeight) /
+                         std::max(eyeDistance, 1.0f);
+  const float ear =
+      (EyeRatio(landmarks, kLeftEye) + EyeRatio(landmarks, kRightEye)) * 0.5f;
+  const float marHorizontal = Distance2D(landmarks[kMouth[4]], landmarks[kMouth[5]]);
+  const float mar = marHorizontal <= kEpsilon
+                        ? 0.0f
+                        : (Distance2D(landmarks[kMouth[0]], landmarks[kMouth[3]]) +
+                           Distance2D(landmarks[kMouth[1]], landmarks[kMouth[2]])) /
+                              (2.0f * marHorizontal);
+
+  const float scale = std::max({std::abs(maxX), std::abs(maxY), boxWidth, boxHeight, 1.0f});
   return std::isfinite(eyeDistance) && std::isfinite(faceHeight) &&
-         eyeDistance > 1.0f && faceHeight > 1.0f;
+         eyeDistance > scale * 0.015f && faceHeight > scale * 0.025f &&
+         boxWidth > scale * 0.035f && boxHeight > scale * 0.035f &&
+         boxToEye >= 1.10f && boxToEye <= 5.25f &&
+         ear >= 0.005f && ear <= 0.85f && mar >= 0.0f && mar <= 1.60f;
 }
 
 }  // namespace
@@ -378,10 +424,32 @@ class FaceMeshEngine::Impl {
       return false;
     }
 
+#if NAYAN_HAS_COREML_DELEGATE
+    TfLiteCoreMlDelegateOptions coreMlOptions = {};
+    coreMlDelegate_.reset(TfLiteCoreMlDelegateCreate(&coreMlOptions));
+    if (coreMlDelegate_ &&
+        interpreter_->ModifyGraphWithDelegate(coreMlDelegate_.get()) !=
+            kTfLiteOk) {
+      coreMlDelegate_.reset();
+    }
+#endif
+#if NAYAN_HAS_METAL_DELEGATE
+    if (coreMlDelegate_ == nullptr) {
+      metalDelegate_.reset(TFLGpuDelegateCreate(nullptr));
+      if (metalDelegate_ &&
+          interpreter_->ModifyGraphWithDelegate(metalDelegate_.get()) !=
+              kTfLiteOk) {
+        metalDelegate_.reset();
+      }
+    }
+#endif
+
     TfLiteXNNPackDelegateOptions options =
         TfLiteXNNPackDelegateOptionsDefault();
     options.num_threads = 2;
-    xnnpackDelegate_.reset(TfLiteXNNPackDelegateCreate(&options));
+    if (coreMlDelegate_ == nullptr && metalDelegate_ == nullptr) {
+      xnnpackDelegate_.reset(TfLiteXNNPackDelegateCreate(&options));
+    }
     if (xnnpackDelegate_ &&
         interpreter_->ModifyGraphWithDelegate(xnnpackDelegate_.get()) !=
             kTfLiteOk) {
@@ -475,6 +543,30 @@ class FaceMeshEngine::Impl {
   std::unique_ptr<tflite::FlatBufferModel> model_;
   std::unique_ptr<tflite::Interpreter> interpreter_;
   std::unique_ptr<TfLiteDelegate, XnnpackDeleter> xnnpackDelegate_;
+#if NAYAN_HAS_COREML_DELEGATE
+  struct CoreMlDeleter {
+    void operator()(TfLiteDelegate* delegate) const {
+      if (delegate != nullptr) {
+        TfLiteCoreMlDelegateDelete(delegate);
+      }
+    }
+  };
+  std::unique_ptr<TfLiteDelegate, CoreMlDeleter> coreMlDelegate_;
+#else
+  std::unique_ptr<TfLiteDelegate> coreMlDelegate_;
+#endif
+#if NAYAN_HAS_METAL_DELEGATE
+  struct MetalDeleter {
+    void operator()(TfLiteDelegate* delegate) const {
+      if (delegate != nullptr) {
+        TFLGpuDelegateDelete(delegate);
+      }
+    }
+  };
+  std::unique_ptr<TfLiteDelegate, MetalDeleter> metalDelegate_;
+#else
+  std::unique_ptr<TfLiteDelegate> metalDelegate_;
+#endif
 #endif
 };
 

@@ -3,6 +3,7 @@
 #include <atomic>
 #include <chrono>
 #include <cstdint>
+#include <cstring>
 #include <string>
 
 #include "FaceMeshEngine.h"
@@ -31,16 +32,16 @@ struct LivenessThresholds {
   std::chrono::milliseconds blinkWindow{800};
   float smileMar{0.45f};
   std::chrono::milliseconds smileSustain{600};
-  float yawDeltaDegrees{20.0f};
+  float yawDeltaDegrees{8.0f};
   std::chrono::milliseconds turnWindow{2000};
   std::chrono::milliseconds challengeTimeout{4000};
   std::chrono::milliseconds failResetDelay{2000};
+  std::chrono::milliseconds faceDropoutTolerance{300};
 };
 
 struct LivenessInput {
   FaceMetrics metrics{};
-  std::chrono::steady_clock::time_point timestamp{
-      std::chrono::steady_clock::now()};
+  std::chrono::steady_clock::time_point timestamp{std::chrono::steady_clock::now()};
   bool passiveTextureOk{true};
   bool passiveDepthOk{true};
 };
@@ -59,9 +60,12 @@ class LivenessFSM {
   explicit LivenessFSM(LivenessThresholds thresholds = {});
 
   LivenessSnapshot Update(const LivenessInput& input);
+  // Run passive anti‑spoof checks (FFT texture analysis) and update internal flag.
+  bool RunPassiveChecks(const LivenessInput& input);
+
   void StartChallenge(LivenessChallenge challenge,
-                      std::chrono::steady_clock::time_point now =
-                          std::chrono::steady_clock::now());
+                       std::chrono::steady_clock::time_point now =
+                           std::chrono::steady_clock::now());
   void Reset(std::chrono::steady_clock::time_point now =
                  std::chrono::steady_clock::now());
   void ForcePass(const char* reason = "verification pass forced");
@@ -87,12 +91,21 @@ class LivenessFSM {
   std::atomic<bool> requiresVerification_{false};
 
   std::chrono::steady_clock::time_point stateEnteredAt_;
+  // Cached result of the most recent passive check.
+  bool lastPassiveOk_{true};
   std::chrono::steady_clock::time_point challengeStartedAt_;
+  std::chrono::steady_clock::time_point lastFaceSeenAt_;
   std::chrono::steady_clock::time_point blinkClosedAt_;
   std::chrono::steady_clock::time_point smileStartedAt_;
   float baselineYaw_{0.0f};
+  float baselineEar_{0.0f};
+  float baselineMar_{0.0f};
   bool blinkWasClosed_{false};
+  bool blinkBaselineCaptured_{false};
+  bool smileBaselineCaptured_{false};
   bool challengeSatisfied_{false};
+  bool turnBaselineCaptured_{false};
+  bool hasLastFaceSeen_{false};
   std::string reason_;
 };
 

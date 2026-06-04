@@ -1,5 +1,4 @@
 #include "LivenessFSM.h"
-
 #include <cmath>
 #include <utility>
 
@@ -18,6 +17,7 @@ LivenessFSM::LivenessFSM(LivenessThresholds thresholds)
     : thresholds_(std::move(thresholds)),
       stateEnteredAt_(Clock::now()),
       challengeStartedAt_(stateEnteredAt_),
+      lastFaceSeenAt_(stateEnteredAt_),
       blinkClosedAt_(stateEnteredAt_),
       smileStartedAt_(stateEnteredAt_) {}
 
@@ -32,13 +32,20 @@ LivenessSnapshot LivenessFSM::Update(const LivenessInput& input) {
   }
 
   if (!input.metrics.faceDetected) {
+    if (state == LivenessState::kChallengeActive && hasLastFaceSeen_ &&
+        input.timestamp - lastFaceSeenAt_ <= thresholds_.faceDropoutTolerance) {
+      reason_ = "brief face dropout tolerated";
+      return Snapshot();
+    }
     if (state != LivenessState::kIdle) {
       Reset(input.timestamp);
     }
     return Snapshot();
   }
+  lastFaceSeenAt_ = input.timestamp;
+  hasLastFaceSeen_ = true;
 
-  if (!PassiveChecksOk(input)) {
+  if (!RunPassiveChecks(input)) {
     Fail("passive antispoof check failed", input.timestamp);
     return Snapshot();
   }
@@ -46,7 +53,8 @@ LivenessSnapshot LivenessFSM::Update(const LivenessInput& input) {
   if (state == LivenessState::kIdle) {
     StoreState(LivenessState::kDetected);
     stateEnteredAt_ = input.timestamp;
-    baselineYaw_ = input.metrics.yaw;
+  baselineYaw_ = input.metrics.yaw;
+    baselineMar_ = input.metrics.mar;
     reason_ = "face detected";
     return Snapshot();
   }
@@ -94,11 +102,16 @@ void LivenessFSM::StartChallenge(LivenessChallenge challenge,
   StoreState(LivenessState::kChallengeActive);
   requiresVerification_.store(false, std::memory_order_release);
   challengeStartedAt_ = now;
+  lastFaceSeenAt_ = now;
   stateEnteredAt_ = now;
   blinkClosedAt_ = now;
   smileStartedAt_ = now;
   blinkWasClosed_ = false;
+  blinkBaselineCaptured_ = false;
+  smileBaselineCaptured_ = false;
   challengeSatisfied_ = false;
+  turnBaselineCaptured_ = false;
+  hasLastFaceSeen_ = true;
   reason_ = "challenge active";
 }
 
@@ -108,11 +121,18 @@ void LivenessFSM::Reset(Clock::time_point now) {
   requiresVerification_.store(false, std::memory_order_release);
   stateEnteredAt_ = now;
   challengeStartedAt_ = now;
+  lastFaceSeenAt_ = now;
   blinkClosedAt_ = now;
   smileStartedAt_ = now;
   baselineYaw_ = 0.0f;
+  baselineEar_ = 0.0f;
+  baselineMar_ = 0.0f;
   blinkWasClosed_ = false;
+  blinkBaselineCaptured_ = false;
+  smileBaselineCaptured_ = false;
   challengeSatisfied_ = false;
+  turnBaselineCaptured_ = false;
+  hasLastFaceSeen_ = false;
   reason_.clear();
 }
 
@@ -152,6 +172,11 @@ void LivenessFSM::StoreChallenge(LivenessChallenge challenge) {
   challenge_.store(static_cast<int>(challenge), std::memory_order_release);
 }
 
+bool LivenessFSM::RunPassiveChecks(const LivenessInput& input) {
+  lastPassiveOk_ = PassiveChecksOk(input);
+  return lastPassiveOk_;
+}
+
 void LivenessFSM::Fail(const char* reason, Clock::time_point now) {
   StoreState(LivenessState::kLivenessFail);
   requiresVerification_.store(false, std::memory_order_release);
@@ -174,7 +199,25 @@ bool LivenessFSM::ChallengeTimedOut(Clock::time_point now) const {
 
 void LivenessFSM::EvaluateBlink(const LivenessInput& input) {
   const float ear = input.metrics.ear;
-  if (!blinkWasClosed_ && ear < thresholds_.blinkClosedEar) {
+  if (!std::isfinite(ear) || ear <= 0.0f) {
+    reason_ = "waiting for valid eye metric";
+    return;
+  }
+
+  if (!blinkBaselineCaptured_) {
+    baselineEar_ = ear;
+    blinkBaselineCaptured_ = true;
+    reason_ = "blink baseline captured";
+    return;
+  }
+
+  const float dynamicClosedEar = std::max(
+      thresholds_.blinkClosedEar,
+      baselineEar_ * 0.78f);
+  const float dynamicOpenEar =
+      std::max(dynamicClosedEar + 0.015f, baselineEar_ * 0.88f);
+
+  if (!blinkWasClosed_ && ear <= dynamicClosedEar) {
     blinkWasClosed_ = true;
     blinkClosedAt_ = input.timestamp;
     reason_ = "blink closed";
@@ -188,14 +231,30 @@ void LivenessFSM::EvaluateBlink(const LivenessInput& input) {
       return;
     }
 
-    if (ear > thresholds_.blinkOpenEar) {
+    if (ear >= dynamicOpenEar) {
       Pass("blink challenge passed");
     }
   }
 }
 
 void LivenessFSM::EvaluateSmile(const LivenessInput& input) {
-  if (input.metrics.mar > thresholds_.smileMar) {
+  const float mar = input.metrics.mar;
+  if (!std::isfinite(mar) || mar <= 0.0f) {
+    reason_ = "waiting for valid mouth metric";
+    return;
+  }
+
+  if (!smileBaselineCaptured_) {
+    baselineMar_ = mar;
+    smileBaselineCaptured_ = true;
+    reason_ = "smile baseline captured";
+    return;
+  }
+
+  const float dynamicSmileMar =
+      std::max(thresholds_.smileMar, baselineMar_ * 1.18f);
+
+  if (mar > dynamicSmileMar) {
     if (smileStartedAt_ == challengeStartedAt_) {
       smileStartedAt_ = input.timestamp;
     }
@@ -211,6 +270,13 @@ void LivenessFSM::EvaluateSmile(const LivenessInput& input) {
 }
 
 void LivenessFSM::EvaluateTurn(const LivenessInput& input, bool left) {
+  if (!turnBaselineCaptured_) {
+    baselineYaw_ = input.metrics.yaw;
+    turnBaselineCaptured_ = true;
+    reason_ = "turn baseline captured";
+    return;
+  }
+
   const float delta = input.metrics.yaw - baselineYaw_;
   const bool passed = left ? delta <= -thresholds_.yawDeltaDegrees
                            : delta >= thresholds_.yawDeltaDegrees;

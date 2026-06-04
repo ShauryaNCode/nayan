@@ -14,11 +14,15 @@ find_package(fbjni REQUIRED CONFIG)
 
 add_subdirectory(${CMAKE_CURRENT_LIST_DIR}/../../../../../cpp ${CMAKE_CURRENT_BINARY_DIR}/offline_face_auth_build)
 
-add_library(offline_face_auth_jni SHARED ${CMAKE_CURRENT_LIST_DIR}/jni_bridge.cpp)
+add_library(offline_face_auth_jni SHARED
+  ${CMAKE_CURRENT_LIST_DIR}/jni_bridge.cpp
+  ${CMAKE_CURRENT_LIST_DIR}/lsh/LSHProjection.cpp
+)
 
 target_include_directories(offline_face_auth_jni
   PRIVATE
     ${CMAKE_CURRENT_LIST_DIR}
+    ${CMAKE_CURRENT_LIST_DIR}/lsh
     ${CMAKE_CURRENT_LIST_DIR}/../../../../../cpp
 )
 
