@@ -218,6 +218,19 @@ export async function openProductionDatabaseWithState(
     passphrase,
   };
 
+  try {
+    const {LedgerService} = await import('../LedgerService');
+    const chainResult = await LedgerService.verifyChain();
+    if (!chainResult.ok) {
+      console.warn(
+        '[CHAIN INTEGRITY VIOLATION]',
+        JSON.stringify(chainResult.brokenAt),
+      );
+    }
+  } catch (error) {
+    console.warn('[DatabaseManager] Ledger integrity check failed.', error);
+  }
+
   return currentOpenResult;
 }
 

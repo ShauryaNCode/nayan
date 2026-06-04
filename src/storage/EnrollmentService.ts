@@ -2,8 +2,10 @@ import {ADMIN_KEY_VERSION, ADMIN_PUBLIC_KEY_PEM} from '../crypto/AdminKey';
 import {EmbeddingCrypto} from '../crypto/EmbeddingCrypto';
 import {NativeSecureKey} from '../crypto/NativeSecureKey';
 import {wrapDEKWithAdminPublicKey} from '../crypto/RSAOAEP';
+import {getDeviceId} from '../sync/device/DeviceId';
 import {getDatabase} from './database/DatabaseManager';
 import {executeSql} from './database/SQLiteCompat';
+import {LedgerService} from './LedgerService';
 import {
   bytesToHex,
   float32ToBase64,
@@ -15,6 +17,7 @@ export type EnrollmentParams = {
   department: string;
   embedding: Float32Array;
   consentTs: number;
+  locationTag?: string;
 };
 
 let lastZeroedDEKSnapshotForTests: number[] | null = null;
@@ -200,6 +203,20 @@ export const EnrollmentService = {
       }
 
       throw error;
+    }
+
+    try {
+      await LedgerService.recordEvent({
+        personnelId: params.personnelId,
+        eventType: 'ENROLLMENT',
+        deviceId: await getDeviceId(),
+        locationTag: params.locationTag,
+      });
+    } catch (error) {
+      console.warn(
+        '[EnrollmentService] Enrollment committed, but ledger append failed.',
+        error,
+      );
     }
   },
 

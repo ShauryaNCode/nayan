@@ -24,9 +24,8 @@ public final class EmbeddingCryptoModule extends ReactContextBaseJavaModule {
 
   private static final String AES_GCM_TRANSFORMATION = "AES/GCM/NoPadding";
   private static final int DEK_BYTES = 32;
-  private static final int EMBEDDING_BYTES = 512;
-  private static final int ENCRYPTED_BLOB_BYTES = 540;
   private static final int GCM_IV_BYTES = 12;
+  private static final int GCM_TAG_BYTES = 16;
   private static final int GCM_TAG_BITS = 128;
 
   private final SecureRandom secureRandom = new SecureRandom();
@@ -53,9 +52,8 @@ public final class EmbeddingCryptoModule extends ReactContextBaseJavaModule {
     try {
       CryptoUtils.requirePersonnelId(personnelId);
       plaintext = Base64.decode(embeddingBase64, Base64.NO_WRAP);
-      if (plaintext.length != EMBEDDING_BYTES) {
-        throw new IllegalArgumentException(
-            "embedding must be exactly " + EMBEDDING_BYTES + " bytes");
+      if (plaintext.length == 0) {
+        throw new IllegalArgumentException("plaintext must not be empty");
       }
 
       dek = CryptoUtils.hexToBytes(dekHex, DEK_BYTES);
@@ -71,10 +69,6 @@ public final class EmbeddingCryptoModule extends ReactContextBaseJavaModule {
 
       final byte[] ciphertextAndTag = cipher.doFinal(plaintext);
       final byte[] blob = CryptoUtils.concat(iv, ciphertextAndTag);
-      if (blob.length != ENCRYPTED_BLOB_BYTES) {
-        throw new IllegalStateException(
-            "encrypted blob must be " + ENCRYPTED_BLOB_BYTES + " bytes");
-      }
 
       promise.resolve(Base64.encodeToString(blob, Base64.NO_WRAP));
     } catch (Throwable throwable) {
@@ -97,9 +91,9 @@ public final class EmbeddingCryptoModule extends ReactContextBaseJavaModule {
     try {
       CryptoUtils.requirePersonnelId(personnelId);
       final byte[] blob = Base64.decode(encryptedBlobBase64, Base64.NO_WRAP);
-      if (blob.length != ENCRYPTED_BLOB_BYTES) {
+      if (blob.length <= GCM_IV_BYTES + GCM_TAG_BYTES) {
         throw new IllegalArgumentException(
-            "encrypted blob must be exactly " + ENCRYPTED_BLOB_BYTES + " bytes");
+            "encrypted blob is too short");
       }
 
       final byte[] iv = new byte[GCM_IV_BYTES];
@@ -121,10 +115,6 @@ public final class EmbeddingCryptoModule extends ReactContextBaseJavaModule {
       cipher.updateAAD(personnelId.getBytes(StandardCharsets.UTF_8));
 
       plaintext = cipher.doFinal(ciphertextAndTag);
-      if (plaintext.length != EMBEDDING_BYTES) {
-        throw new IllegalStateException(
-            "plaintext embedding must be " + EMBEDDING_BYTES + " bytes");
-      }
 
       promise.resolve(Base64.encodeToString(plaintext, Base64.NO_WRAP));
     } catch (AEADBadTagException exception) {

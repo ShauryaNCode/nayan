@@ -4,6 +4,7 @@ import type {
 
 import {initialSchemaMigration} from './001_initial_schema';
 import {personEmbeddingCryptoMigration} from './002_person_embedding_crypto';
+import {ledgerMonotonicClockMigration} from './003_ledger_monotonic_clock';
 import {executeSql, getRows} from '../SQLiteCompat';
 
 export interface Migration {
@@ -26,6 +27,7 @@ export interface MigrationRunnerResult {
 export const migrations: Migration[] = [
   initialSchemaMigration,
   personEmbeddingCryptoMigration,
+  ledgerMonotonicClockMigration,
 ];
 
 const CREATE_MIGRATIONS_TABLE_SQL = `

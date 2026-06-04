@@ -138,6 +138,19 @@ export function utf8ToBytes(value: string): Uint8Array {
   return new Uint8Array(bytes);
 }
 
+export function utf8FromBytes(bytes: Uint8Array): string {
+  if (typeof TextDecoder !== 'undefined') {
+    return new TextDecoder().decode(bytes);
+  }
+
+  let encoded = '';
+  for (const byte of bytes) {
+    assertByte(byte);
+    encoded += `%${byte.toString(16).padStart(2, '0')}`;
+  }
+  return decodeURIComponent(encoded);
+}
+
 export function concatBytes(parts: Uint8Array[]): Uint8Array {
   const totalLength = parts.reduce((sum, part) => sum + part.byteLength, 0);
   const output = new Uint8Array(totalLength);
