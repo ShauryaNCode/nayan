@@ -349,9 +349,6 @@ public final class NativeBridge extends ReactContextBaseJavaModule {
     if (IS_JSI_INSTALLED.get()) {
       return;
     }
-    if (isX86Emulator()) {
-      return;
-    }
 
     final ReactApplicationContext reactContext = getReactApplicationContext();
     if (reactContext.hasActiveReactInstance()) {
@@ -531,11 +528,8 @@ public final class NativeBridge extends ReactContextBaseJavaModule {
         if (data == null) {
           return;
         }
-        // Always route through the native C++ pipeline. The C++ FrameProcessorPlugin
-        // runs its own optimised FaceMesh + MobileFaceNet inference and — critically —
-        // feeds the LivenessFSM with properly computed EAR/MAR/yaw metrics so that
-        // liveness challenges (blink, smile, turn) can actually pass.
-        nativeEnqueueFrame(
+        // Java TFLite produces landmarks; native code owns liveness/embedding state.
+        TFLiteFrameProcessorRunner.processFromCopiedBuffer(
             data.yBuffer, data.width, data.height, data.stride, data.timestampNs);
       });
 
