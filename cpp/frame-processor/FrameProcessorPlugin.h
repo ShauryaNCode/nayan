@@ -110,5 +110,14 @@ class FrameProcessorPlugin {
   uint64_t latestEmbeddingFrameId_{0};
   std::atomic<bool> embeddingWrittenThisSession_{false};
   std::function<void(const ProcessedFrameResult&)> callback_;
+  // Reusable per-frame buffers to avoid heap allocation every frame.
+  uint32_t cachedWidth_{0};
+  uint32_t cachedHeight_{0};
+  std::vector<uint8_t> rgb_;
+  std::vector<float> lab_;
+  std::vector<uint8_t> lChannel_;
+  std::vector<uint8_t> enhancedL_;
+  std::vector<uint8_t> enhancedRgb_;
+  std::vector<uint8_t> enhanced_;
 };
 }
