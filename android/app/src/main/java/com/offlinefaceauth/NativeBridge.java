@@ -72,6 +72,10 @@ public final class NativeBridge extends ReactContextBaseJavaModule {
   private static final AtomicReference<FrameData> PENDING_FRAME =
       new AtomicReference<>(null);
 
+  // Reusable direct ByteBuffer to avoid per-frame heap allocation.
+  private static volatile ByteBuffer sCachedCopyBuffer;
+  private static volatile int sCachedCopyCapacity;
+
   private static final class FrameData {
     final ByteBuffer yBuffer;
     final int width;
@@ -502,10 +506,16 @@ public final class NativeBridge extends ReactContextBaseJavaModule {
       final int stride = yPlane.getRowStride();
       final long timestampNs = image.getTimestamp();
 
-      // Copy Y-plane so the Frame can be released immediately
+      // Reuse a cached direct ByteBuffer to avoid per-frame allocation.
       final int byteCount = stride * height;
-      final ByteBuffer copy = ByteBuffer.allocateDirect(byteCount);
-      copy.order(ByteOrder.nativeOrder());
+      ByteBuffer copy = sCachedCopyBuffer;
+      if (copy == null || sCachedCopyCapacity < byteCount) {
+        copy = ByteBuffer.allocateDirect(byteCount);
+        copy.order(ByteOrder.nativeOrder());
+        sCachedCopyBuffer = copy;
+        sCachedCopyCapacity = byteCount;
+      }
+      copy.clear();
       srcBuffer.position(0);
       srcBuffer.limit(Math.min(srcBuffer.capacity(), byteCount));
       copy.put(srcBuffer);
@@ -521,13 +531,12 @@ public final class NativeBridge extends ReactContextBaseJavaModule {
         if (data == null) {
           return;
         }
-        if (TFLiteFrameProcessorRunner.isReady()) {
-          TFLiteFrameProcessorRunner.processFromCopiedBuffer(
-              data.yBuffer, data.width, data.height, data.stride, data.timestampNs);
-        } else {
-          nativeEnqueueFrame(
-              data.yBuffer, data.width, data.height, data.stride, data.timestampNs);
-        }
+        // Always route through the native C++ pipeline. The C++ FrameProcessorPlugin
+        // runs its own optimised FaceMesh + MobileFaceNet inference and — critically —
+        // feeds the LivenessFSM with properly computed EAR/MAR/yaw metrics so that
+        // liveness challenges (blink, smile, turn) can actually pass.
+        nativeEnqueueFrame(
+            data.yBuffer, data.width, data.height, data.stride, data.timestampNs);
       });
 
       return true;
