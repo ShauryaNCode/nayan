@@ -23,9 +23,11 @@ public final class NativeBridgePackage implements ReactPackage {
       @NonNull ReactApplicationContext reactContext) {
     registerFrameProcessorPlugin();
 
-    final List<NativeModule> modules = new ArrayList<>(2);
+    final List<NativeModule> modules = new ArrayList<>(4);
     modules.add(new NativeBridge(reactContext));
     modules.add(new EmbeddingCryptoModule(reactContext));
+    modules.add(new NativeUptimeClockModule(reactContext));
+    modules.add(new LSHModule(reactContext));
     return modules;
   }
 

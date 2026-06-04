@@ -1,2 +1,9 @@
-# Path: OfflineFaceAuth/src/storage/lsh/CandidateSearch.ts
-# Purpose: LSH candidate search projecting query embedding, querying matching buckets, running cosine similarity on narrowed candidate set.
+import {LSHIndex, type LSHCandidate} from '../LSHIndex';
+
+export type {LSHCandidate};
+
+export function findLshCandidates(
+  liveEmbedding: Float32Array,
+): Promise<LSHCandidate[]> {
+  return LSHIndex.query({liveEmbedding});
+}

@@ -2,8 +2,11 @@ import {ADMIN_KEY_VERSION, ADMIN_PUBLIC_KEY_PEM} from '../crypto/AdminKey';
 import {EmbeddingCrypto} from '../crypto/EmbeddingCrypto';
 import {NativeSecureKey} from '../crypto/NativeSecureKey';
 import {wrapDEKWithAdminPublicKey} from '../crypto/RSAOAEP';
+import {getDeviceId} from '../sync/device/DeviceId';
 import {getDatabase} from './database/DatabaseManager';
 import {executeSql} from './database/SQLiteCompat';
+import {LedgerService} from './LedgerService';
+import {LSHIndex} from './LSHIndex';
 import {
   bytesToHex,
   float32ToBase64,
@@ -15,6 +18,7 @@ export type EnrollmentParams = {
   department: string;
   embedding: Float32Array;
   consentTs: number;
+  locationTag?: string;
 };
 
 let lastZeroedDEKSnapshotForTests: number[] | null = null;
@@ -69,22 +73,38 @@ function assertEnrollmentParams(params: EnrollmentParams): void {
   }
 }
 
-function executeEnrollmentTransaction(params: {
+async function executeEnrollmentTransaction(params: {
   personnelId: string;
   name: string;
   department: string;
-  encryptedEmbed: string;
+  embedding: Float32Array;
+  dekHex: string;
   kekHwWrapped: string;
   kekAdminWrapped: string;
   enrollmentTs: number;
   consentTs: number;
-}): void {
+}): Promise<void> {
   const db = getDatabase();
   const isoNow = new Date(params.enrollmentTs).toISOString();
   const consentLogId = `${params.personnelId}:consent:${params.consentTs}`;
 
   try {
     executeSql(db, 'BEGIN IMMEDIATE;');
+    executeSql(db, 'PRAGMA defer_foreign_keys=ON;');
+
+    await LSHIndex.indexEmbedding({
+      personnelId: params.personnelId,
+      embedding: params.embedding,
+      db,
+    });
+
+    const embeddingBase64 = float32ToBase64(params.embedding);
+    const encryptedEmbed = await EmbeddingCrypto.encrypt(
+      embeddingBase64,
+      params.personnelId,
+      params.dekHex,
+    );
+
     executeSql(
       db,
       `
@@ -107,7 +127,7 @@ function executeEnrollmentTransaction(params: {
         params.personnelId,
         params.name,
         params.department,
-        params.encryptedEmbed,
+        encryptedEmbed,
         params.kekHwWrapped,
         params.kekAdminWrapped,
         ADMIN_KEY_VERSION,
@@ -163,28 +183,23 @@ export const EnrollmentService = {
         dek,
         ADMIN_PUBLIC_KEY_PEM,
       );
-      const embeddingBase64 = float32ToBase64(params.embedding);
-      const encryptedEmbed = await EmbeddingCrypto.encrypt(
-        embeddingBase64,
-        params.personnelId,
-        dekHex,
-      );
 
-      dek.fill(0);
-      lastZeroedDEKSnapshotForTests = Array.from(dek);
-      dekHex = ''.padStart(64, '0');
-      console.debug('[EnrollmentService] DEK zeroed after embedding encryption.');
-
-      executeEnrollmentTransaction({
+      await executeEnrollmentTransaction({
         personnelId: params.personnelId,
         name: params.name,
         department: params.department,
-        encryptedEmbed,
+        embedding: params.embedding,
+        dekHex,
         kekHwWrapped,
         kekAdminWrapped,
         enrollmentTs: Date.now(),
         consentTs: params.consentTs,
       });
+
+      dek.fill(0);
+      lastZeroedDEKSnapshotForTests = Array.from(dek);
+      dekHex = ''.padStart(64, '0');
+      console.debug('[EnrollmentService] DEK zeroed after embedding encryption.');
     } catch (error) {
       dek.fill(0);
       lastZeroedDEKSnapshotForTests = Array.from(dek);
@@ -200,6 +215,20 @@ export const EnrollmentService = {
       }
 
       throw error;
+    }
+
+    try {
+      await LedgerService.recordEvent({
+        personnelId: params.personnelId,
+        eventType: 'ENROLLMENT',
+        deviceId: await getDeviceId(),
+        locationTag: params.locationTag,
+      });
+    } catch (error) {
+      console.warn(
+        '[EnrollmentService] Enrollment committed, but ledger append failed.',
+        error,
+      );
     }
   },
 

@@ -123,3 +123,8 @@ export interface EmbeddingCryptoModule {
     dekHex: string,
   ) => Promise<string>;
 }
+
+export interface LSHModule {
+  loadHyperplanes: (hyperplanes: number[][][]) => Promise<void>;
+  computeBucketKeys: (embeddingBase64: string) => Promise<string[]>;
+}

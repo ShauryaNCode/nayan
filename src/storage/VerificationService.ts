@@ -81,4 +81,12 @@ export const VerificationService = {
       void dekHex;
     }
   },
+
+  async findCandidates(liveEmbedding: Float32Array): Promise<Array<{
+    personnelId: string;
+    embedding: Float32Array;
+  }>> {
+    const {LSHIndex} = await import('./LSHIndex');
+    return LSHIndex.query({liveEmbedding});
+  },
 };

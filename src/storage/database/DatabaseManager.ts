@@ -8,6 +8,8 @@ import {
   deriveSQLCipherPassphrase,
   type SQLCipherPassphraseResult,
 } from '../encryption/KeyDerivation';
+import {LSH_HYPERPLANES} from '../../crypto/LSHHyperplanes';
+import {LSHModule} from '../../crypto/LSHModule';
 import {
   runMigrations,
   type MigrationRunnerResult,
@@ -46,6 +48,7 @@ export interface DatabaseOpenResult {
 
 let currentDb: DB | null = null;
 let currentOpenResult: DatabaseOpenResult | null = null;
+let lshHyperplanesLoaded = false;
 
 export function isSQLCipherEnabled(): boolean {
   return isSQLCipher();
@@ -202,6 +205,7 @@ export async function openProductionDatabaseWithState(
   config: OpenProductionDatabaseConfig = {},
 ): Promise<DatabaseOpenResult> {
   if (currentOpenResult) {
+    await loadLSHHyperplanes();
     return currentOpenResult;
   }
 
@@ -218,7 +222,30 @@ export async function openProductionDatabaseWithState(
     passphrase,
   };
 
+  await loadLSHHyperplanes();
+
+  try {
+    const {LedgerService} = await import('../LedgerService');
+    const chainResult = await LedgerService.verifyChain();
+    if (!chainResult.ok) {
+      console.warn(
+        '[CHAIN INTEGRITY VIOLATION]',
+        JSON.stringify(chainResult.brokenAt),
+      );
+    }
+  } catch (error) {
+    console.warn('[DatabaseManager] Ledger integrity check failed.', error);
+  }
+
   return currentOpenResult;
+}
+
+async function loadLSHHyperplanes(): Promise<void> {
+  if (lshHyperplanesLoaded) {
+    return;
+  }
+  await LSHModule.loadHyperplanes(LSH_HYPERPLANES);
+  lshHyperplanesLoaded = true;
 }
 
 export function getDatabase(): DB {
@@ -239,6 +266,7 @@ export function closeDatabase(): void {
     currentDb.close();
     currentDb = null;
     currentOpenResult = null;
+    lshHyperplanesLoaded = false;
     console.log('[DatabaseManager] Database closed');
   }
 }

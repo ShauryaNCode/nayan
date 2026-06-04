@@ -8,9 +8,8 @@ import {
   utf8ToBytes,
 } from '../utils/BufferUtils';
 
-const EMBEDDING_PLAINTEXT_BYTES = 512;
-const EMBEDDING_ENCRYPTED_BYTES = 540;
 const GCM_IV_BYTES = 12;
+const GCM_TAG_BYTES = 16;
 const GCM_TAG_BITS = 128;
 
 type EmbeddingCryptoNativeModule = {
@@ -87,10 +86,8 @@ async function encryptWithWebCrypto(
   dekHex: string,
 ): Promise<string> {
   const plaintext = base64ToBytes(embeddingBase64);
-  if (plaintext.byteLength !== EMBEDDING_PLAINTEXT_BYTES) {
-    throw new Error(
-      `[EmbeddingCrypto] Expected 512 embedding bytes, got ${plaintext.byteLength}.`,
-    );
+  if (plaintext.byteLength === 0) {
+    throw new Error('[EmbeddingCrypto] Plaintext must not be empty.');
   }
 
   const iv = getRandomIV();
@@ -109,11 +106,6 @@ async function encryptWithWebCrypto(
     );
 
     const blob = concatBytes([iv, new Uint8Array(ciphertextAndTag)]);
-    if (blob.byteLength !== EMBEDDING_ENCRYPTED_BYTES) {
-      throw new Error(
-        `[EmbeddingCrypto] Expected 540 encrypted bytes, got ${blob.byteLength}.`,
-      );
-    }
     return bytesToBase64(blob);
   } finally {
     plaintext.fill(0);
@@ -126,9 +118,9 @@ async function decryptWithWebCrypto(
   dekHex: string,
 ): Promise<string> {
   const blob = base64ToBytes(encryptedBlobBase64);
-  if (blob.byteLength !== EMBEDDING_ENCRYPTED_BYTES) {
+  if (blob.byteLength <= GCM_IV_BYTES + GCM_TAG_BYTES) {
     throw new Error(
-      `[EmbeddingCrypto] Expected 540 encrypted bytes, got ${blob.byteLength}.`,
+      `[EmbeddingCrypto] Encrypted blob is too short (${blob.byteLength} bytes).`,
     );
   }
 
@@ -147,13 +139,6 @@ async function decryptWithWebCrypto(
   );
 
   const bytes = new Uint8Array(plaintext);
-  if (bytes.byteLength !== EMBEDDING_PLAINTEXT_BYTES) {
-    bytes.fill(0);
-    throw new Error(
-      `[EmbeddingCrypto] Expected 512 plaintext bytes, got ${bytes.byteLength}.`,
-    );
-  }
-
   return bytesToBase64(bytes);
 }
 
