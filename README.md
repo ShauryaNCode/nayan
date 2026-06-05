@@ -1,15 +1,58 @@
-# nayan
-
+# NAYAN 
 Nayan is a React Native 0.73 application shell for an offline face-authentication workflow. The app uses TypeScript for the React Native layer, Android and iOS native shells, and a shared cross-platform C++ engine compiled through CMake/CocoaPods.
+---
+<img width="2087" height="1169" alt="image" src="https://github.com/user-attachments/assets/6162a510-7506-443f-8e36-c54207d19c0f" />
 
-## Current Status
+## Android Run
 
-- React Native 0.73.6 is initialized with Hermes enabled.
-- Android debug builds and installs successfully.
-- Android CMake builds the shared C++ engine and JNI bridge for `armeabi-v7a`, `arm64-v8a`, `x86`, and `x86_64`.
-- iOS has a React Native 0.73 Podfile, Xcode project scaffold, and `NayanNativeEngine` podspec.
-- New Architecture is currently disabled on Android because the app does not yet generate `libappmodules.so`.
-- JSI injection is skipped on x86/x86_64 emulators to avoid emulator-only illegal-instruction crashes. Test the full JSI path on an ARM Android device.
+Start Metro:
+
+```powershell
+cd C:\Users\th366\Desktop\nayan
+npx react-native start --reset-cache
+```
+
+Install and run the debug app:
+
+```powershell
+cd C:\Users\th366\Desktop\nayan\android
+.\gradlew.bat :app:installDebug
+```
+
+Or use the React Native CLI from the project root:
+
+```powershell
+npx react-native run-android
+```
+
+If the emulator reports insufficient storage, wipe emulator data from Android Studio Device Manager and reinstall.
+
+## iOS Run
+
+iOS must be built on macOS with Xcode and CocoaPods:
+
+```bash
+cd ios
+pod install
+cd ..
+npx react-native run-ios
+```
+
+The iOS shell is scaffolded, but has not been verified from this Windows workspace.
+
+## Emulator Notes
+
+On x86/x86_64 Android emulators, the app intentionally skips native JSI global injection. The UI can show:
+
+```text
+Engine Presence: Missing
+Initialization State: Not initialized
+```
+
+That is expected on the emulator-safe path. The React Native app still runs, and the JNI/CMake build is packaged. Use a real ARM Android device to validate the full native JSI bridge and frame-processor path.
+
+<img width="2089" height="1175" alt="image" src="https://github.com/user-attachments/assets/90fb8590-2d19-400b-b542-630cc6d2154c" />
+
 
 ## Project Structure
 
@@ -94,118 +137,12 @@ nayan/
 `-- README.md
 ```
 
-## Native Build Layout
+## 👥 Team
 
-Android native build flow:
+| Contributor | Role | Responsibilities |
+|------------|------|------------------|
+| **[Shaurya Naik](https://github.com/ShauryaNCode)** | Team Lead, Native ML Pipeline Architect & Liveness & UX Systems Engineer | Provide overall project leadership while architecting the native ML pipeline and liveness tracking systems. He develops the C++ frame processor plugin, integrates MobileFaceNet and MediaPipe models, implements image normalization, designs the 5-state liveness FSM, and builds the 60 FPS Skia UI overlay and haptic feedback systems. |
+| **[Gaurav Parker](https://github.com/DeltaG06)** | Secure Storage & Crypto Engineer | Secures the application by implementing a SQLCipher encrypted database with per-vector AES-256-GCM encryption. He manages hardware-backed key generation via Keystore and Secure Enclave, builds a blockchain-style SHA-256 transaction ledger with launch integrity checks, and implements an $O(\log N)$ vector index for rapid local face search. |
+| **[Gaurang Khanolkar](https://github.com/gaurang0410)** | Sync, Connectivity & Demo Engineer | Manages data synchronization and the demo environment. He builds an atomic offline queue with write-ahead logging, implements NetInfo-driven exponential backoffs, coordinates AWS S3 multipart sync with conflict resolution, secures post-sync data purging, and designs the end-to-end Airplane Mode demo flow alongside performance monitoring UIs and integration tests. |
 
-```text
-android/app/build.gradle
-  -> android/app/src/main/cpp/CMakeLists.txt
-      -> cpp/CMakeLists.txt
-          -> nayan::native_engine
-      -> offline_face_auth_jni
-```
-
-iOS native build flow:
-
-```text
-ios/Podfile
-  -> ios/NayanNativeEngine.podspec
-      -> cpp/{common,clahe,frame-processor,inference}
-```
-
-The root CMake target exposes these C++ include areas:
-
-```text
-cpp/antispoof
-cpp/clahe
-cpp/common
-cpp/crypto
-cpp/frame-processor
-cpp/inference
-cpp/landmarks
-```
-
-Only native sources that are currently valid implementation files are compiled. Placeholder source files remain in place for future implementation work.
-
-## Android Run
-
-Start Metro:
-
-```powershell
-cd C:\Users\th366\Desktop\nayan
-npx react-native start --reset-cache
-```
-
-Install and run the debug app:
-
-```powershell
-cd C:\Users\th366\Desktop\nayan\android
-.\gradlew.bat :app:installDebug
-```
-
-Or use the React Native CLI from the project root:
-
-```powershell
-npx react-native run-android
-```
-
-If the emulator reports insufficient storage, wipe emulator data from Android Studio Device Manager and reinstall.
-
-## iOS Run
-
-iOS must be built on macOS with Xcode and CocoaPods:
-
-```bash
-cd ios
-pod install
-cd ..
-npx react-native run-ios
-```
-
-The iOS shell is scaffolded, but has not been verified from this Windows workspace.
-
-## Emulator Notes
-
-On x86/x86_64 Android emulators, the app intentionally skips native JSI global injection. The UI can show:
-
-```text
-Engine Presence: Missing
-Initialization State: Not initialized
-```
-
-That is expected on the emulator-safe path. The React Native app still runs, and the JNI/CMake build is packaged. Use a real ARM Android device to validate the full native JSI bridge and frame-processor path.
-
-## Useful Commands
-
-Build Android debug APK:
-
-```powershell
-cd C:\Users\th366\Desktop\nayan\android
-.\gradlew.bat :app:assembleDebug
-```
-
-Install Android debug APK:
-
-```powershell
-cd C:\Users\th366\Desktop\nayan\android
-.\gradlew.bat :app:installDebug
-```
-
-Capture app crash logs:
-
-```powershell
-C:\Users\th366\AppData\Local\Android\Sdk\platform-tools\adb.exe logcat -c
-C:\Users\th366\AppData\Local\Android\Sdk\platform-tools\adb.exe shell am start -n com.offlinefaceauth/.MainActivity
-C:\Users\th366\AppData\Local\Android\Sdk\platform-tools\adb.exe logcat -d -v time | findstr /i "AndroidRuntime FATAL ReactNativeJS SIGSEGV UnsatisfiedLinkError offlinefaceauth"
-```
-
-## Important Android Settings
-
-```properties
-hermesEnabled=true
-newArchEnabled=false
-reactNativeArchitectures=armeabi-v7a,arm64-v8a,x86,x86_64
-```
-
-New Architecture stays disabled until the app has proper generated New Architecture app modules. Enabling it too early makes RN load `libappmodules.so`, which is not generated yet.
+---
