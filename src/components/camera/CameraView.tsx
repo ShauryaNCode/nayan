@@ -1,4 +1,4 @@
-import React, {useEffect, useMemo, useRef, useState} from 'react';
+import React, {useCallback, useEffect, useMemo, useRef, useState} from 'react';
 import {StyleSheet, Text, View} from 'react-native';
 import {
   Camera,
@@ -161,16 +161,58 @@ export function CameraView({
   const telemetry = useNativeLivenessTelemetry(isActive && hasPermission);
   const previousState = useRef(telemetry.state);
   const previousChallenge = useRef(telemetry.challenge);
+  const frameDeliveryDiagnosticLogged = useRef(false);
+  const [previewInitialized, setPreviewInitialized] = useState(false);
   const frameProcessor = useFrameProcessor((frame) => {
     'worklet';
     nayanFrameProcessorPlugin?.call(frame);
   }, [nayanFrameProcessorPlugin]);
+
+  const handleInitialized = useCallback(() => {
+    setPreviewInitialized(true);
+    onPreviewReady?.();
+  }, [onPreviewReady]);
 
   useEffect(() => {
     if (!hasPermission) {
       requestPermission();
     }
   }, [hasPermission, requestPermission]);
+
+  useEffect(() => {
+    if (!isActive || !hasPermission || !previewInitialized) {
+      frameDeliveryDiagnosticLogged.current = false;
+      return undefined;
+    }
+    if (
+      nayanFrameProcessorPlugin == null ||
+      frameDeliveryDiagnosticLogged.current
+    ) {
+      return undefined;
+    }
+
+    frameDeliveryDiagnosticLogged.current = true;
+    const initialCount = getLatestFrameResult()?.framesProcessed ?? 0;
+    // eslint-disable-next-line no-console
+    console.log(
+      '[DIAG] Camera preview initialized. Initial frames_processed:',
+      initialCount,
+    );
+
+    const timeout = setTimeout(() => {
+      const count = getLatestFrameResult()?.framesProcessed ?? 0;
+      // eslint-disable-next-line no-console
+      console.log('[DIAG] frames_processed after active preview:', count);
+      if (count === initialCount) {
+        // eslint-disable-next-line no-console
+        console.log(
+          '[DIAG] FrameProcessorPlugin has not produced a processed frame since preview initialization.',
+        );
+      }
+    }, 2000);
+
+    return () => clearTimeout(timeout);
+  }, [hasPermission, isActive, nayanFrameProcessorPlugin, previewInitialized]);
 
   useEffect(() => {
     if (telemetry.challenge !== previousChallenge.current) {
@@ -223,7 +265,7 @@ export function CameraView({
         pixelFormat="yuv"
         isActive={isActive && hasPermission}
         frameProcessor={frameProcessor}
-        onInitialized={onPreviewReady}
+        onInitialized={handleInitialized}
       />
       <LivenessRing state={ringState ?? STATE_TO_RING[telemetry.state] ?? 'idle'} />
       <ChallengeText

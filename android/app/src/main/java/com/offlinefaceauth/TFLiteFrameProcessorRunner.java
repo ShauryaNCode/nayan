@@ -127,8 +127,9 @@ final class TFLiteFrameProcessorRunner {
       @Nullable Image image) {
     final long inferenceStartedNs = System.nanoTime();
 
-    final FaceCandidate faceCandidate =
-        findFaceCandidateFast(image, yBuffer, width, height, stride);
+    final FaceCandidate faceCandidate = image != null && image.getPlanes().length >= 3
+        ? findFaceCandidate(image, yBuffer, width, height, stride)
+        : findFaceCandidateFast(image, yBuffer, width, height, stride);
     if (!faceCandidate.faceLike) {
       final float inferenceMs =
           (System.nanoTime() - inferenceStartedNs) / 1_000_000.0f;
@@ -180,9 +181,9 @@ final class TFLiteFrameProcessorRunner {
       if (!frameHasEnoughTexture(yBuffer, width, height, stride)) {
         return FaceCandidate.none();
       }
-      // Try single-orientation Android detector with front camera default (270°)
+      // Try the legacy detector across supported frame orientations.
       final FaceCandidate detectorCandidate =
-          detectFaceCandidateAtOrientation(yBuffer, width, height, stride, 270);
+          detectFaceCandidateWithAndroidDetector(yBuffer, width, height, stride);
       if (detectorCandidate.faceLike) {
         return detectorCandidate;
       }
@@ -383,8 +384,10 @@ final class TFLiteFrameProcessorRunner {
     }
     final boolean confidenceAllowsFace =
         !hasPresenceScore || presenceScore >= FACE_PRESENCE_HARD_REJECT_THRESHOLD;
+    final boolean geometryAllowsFace = landmarksLookLikeFace(landmarks, width, height);
     final boolean facePresent =
-        confidenceAllowsFace && landmarksLookLikeFace(landmarks, width, height);
+        geometryAllowsFace &&
+            (confidenceAllowsFace || candidate.confidence >= STRONG_FACE_CANDIDATE_CONFIDENCE);
     return new FaceMeshOutput(landmarks, facePresent, presenceScore);
   }
 
@@ -1036,7 +1039,7 @@ final class TFLiteFrameProcessorRunner {
         eyeRatio(values, 362, 385, 387, 263, 373, 380));
     final float mar = mouthRatio(values);
     return boxToEye >= 1.35f && boxToEye <= 3.60f &&
-        ear >= 0.03f && ear <= 0.60f &&
+        ear >= 0.03f && ear <= 0.85f &&
         mar >= 0.01f && mar <= 1.20f;
   }
 

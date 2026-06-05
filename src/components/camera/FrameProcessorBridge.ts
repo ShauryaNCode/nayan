@@ -60,20 +60,6 @@ export async function initializeFrameProcessorBridge(
   await NativeBridge.initializeEngine(modelPath ?? null);
   const installed = await NativeBridge.ensureJsiInstalled();
   getNayanFrameProcessorPlugin();
-  const initialCount = getLatestFrameResult()?.framesProcessed ?? 0;
-  // eslint-disable-next-line no-console
-  console.log('[DIAG] Initial frames_processed:', initialCount);
-  setTimeout(() => {
-    const count = getLatestFrameResult()?.framesProcessed ?? 0;
-    // eslint-disable-next-line no-console
-    console.log('[DIAG] frames_processed after 1s:', count);
-    if (count === initialCount) {
-      // eslint-disable-next-line no-console
-      console.error(
-        '[FATAL] FrameProcessorPlugin not receiving frames. Check worklet registration.',
-      );
-    }
-  }, 1000);
   return installed;
 }
 

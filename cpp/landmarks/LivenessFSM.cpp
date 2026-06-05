@@ -1,4 +1,5 @@
 #include "LivenessFSM.h"
+#include <algorithm>
 #include <cmath>
 #include <utility>
 
@@ -108,6 +109,7 @@ void LivenessFSM::StartChallenge(LivenessChallenge challenge,
   smileStartedAt_ = now;
   blinkWasClosed_ = false;
   blinkBaselineCaptured_ = false;
+  blinkMinEarDuringClosure_ = 0.0f;
   smileBaselineCaptured_ = false;
   challengeSatisfied_ = false;
   turnBaselineCaptured_ = false;
@@ -126,6 +128,7 @@ void LivenessFSM::Reset(Clock::time_point now) {
   smileStartedAt_ = now;
   baselineYaw_ = 0.0f;
   baselineEar_ = 0.0f;
+  blinkMinEarDuringClosure_ = 0.0f;
   baselineMar_ = 0.0f;
   blinkWasClosed_ = false;
   blinkBaselineCaptured_ = false;
@@ -211,27 +214,52 @@ void LivenessFSM::EvaluateBlink(const LivenessInput& input) {
     return;
   }
 
-  const float dynamicClosedEar = std::max(
-      thresholds_.blinkClosedEar,
-      baselineEar_ * 0.78f);
-  const float dynamicOpenEar =
-      std::max(dynamicClosedEar + 0.015f, baselineEar_ * 0.88f);
+  const bool scaledEar =
+      baselineEar_ > thresholds_.blinkOpenEar * thresholds_.blinkScaledEarMultiplier;
+  const bool relativeEar = baselineEar_ < thresholds_.blinkClosedEar;
+  const float dynamicClosedEar = scaledEar
+      ? baselineEar_ - std::max(thresholds_.blinkScaledMinCloseDrop,
+                                baselineEar_ * thresholds_.blinkScaledCloseDropRatio)
+      : relativeEar
+          ? baselineEar_ - std::max(thresholds_.blinkRelativeMinCloseDrop,
+                                    baselineEar_ * thresholds_.blinkRelativeCloseDropRatio)
+      : std::max(thresholds_.blinkClosedEar, baselineEar_ * 0.78f);
+  const float dynamicOpenEar = scaledEar
+      ? baselineEar_ - std::max(thresholds_.blinkScaledMinCloseDrop * 0.5f,
+                                baselineEar_ * thresholds_.blinkScaledOpenDropRatio)
+      : relativeEar
+          ? dynamicClosedEar + std::max(thresholds_.blinkRelativeMinRecovery,
+                                        baselineEar_ * thresholds_.blinkRelativeRecoveryRatio)
+      : std::max(
+            dynamicClosedEar + thresholds_.blinkRecoveryEar,
+            std::min(thresholds_.blinkOpenEar, baselineEar_ * 0.88f));
+  const float recoveryDelta = scaledEar
+      ? std::max(thresholds_.blinkScaledMinCloseDrop,
+                 baselineEar_ * thresholds_.blinkScaledCloseDropRatio)
+      : relativeEar
+          ? std::max(thresholds_.blinkRelativeMinRecovery,
+                     baselineEar_ * thresholds_.blinkRelativeRecoveryRatio)
+          : thresholds_.blinkRecoveryEar;
 
   if (!blinkWasClosed_ && ear <= dynamicClosedEar) {
     blinkWasClosed_ = true;
     blinkClosedAt_ = input.timestamp;
+    blinkMinEarDuringClosure_ = ear;
     reason_ = "blink closed";
     return;
   }
 
   if (blinkWasClosed_) {
+    blinkMinEarDuringClosure_ = std::min(blinkMinEarDuringClosure_, ear);
     if (input.timestamp - blinkClosedAt_ > thresholds_.blinkWindow) {
       blinkWasClosed_ = false;
+      blinkMinEarDuringClosure_ = 0.0f;
       reason_ = "blink window expired";
       return;
     }
 
-    if (ear >= dynamicOpenEar) {
+    if (ear >= dynamicOpenEar ||
+        ear - blinkMinEarDuringClosure_ >= recoveryDelta) {
       Pass("blink challenge passed");
     }
   }
@@ -280,7 +308,7 @@ void LivenessFSM::EvaluateTurn(const LivenessInput& input, bool left) {
   const float delta = input.metrics.yaw - baselineYaw_;
   const bool passed = left ? delta <= -thresholds_.yawDeltaDegrees
                            : delta >= thresholds_.yawDeltaDegrees;
-  if (passed && input.timestamp - challengeStartedAt_ <= thresholds_.turnWindow) {
+  if (passed) {
     Pass(left ? "turn left challenge passed" : "turn right challenge passed");
   }
 }

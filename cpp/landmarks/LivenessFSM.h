@@ -29,14 +29,23 @@ enum class LivenessChallenge : uint8_t {
 struct LivenessThresholds {
   float blinkClosedEar{0.21f};
   float blinkOpenEar{0.28f};
+  float blinkRecoveryEar{0.04f};
+  float blinkScaledEarMultiplier{1.5f};
+  float blinkScaledCloseDropRatio{0.01f};
+  float blinkScaledOpenDropRatio{0.004f};
+  float blinkScaledMinCloseDrop{0.006f};
+  float blinkRelativeCloseDropRatio{0.06f};
+  float blinkRelativeMinCloseDrop{0.008f};
+  float blinkRelativeRecoveryRatio{0.035f};
+  float blinkRelativeMinRecovery{0.006f};
   std::chrono::milliseconds blinkWindow{800};
   float smileMar{0.45f};
   std::chrono::milliseconds smileSustain{600};
-  float yawDeltaDegrees{8.0f};
+  float yawDeltaDegrees{6.0f};
   std::chrono::milliseconds turnWindow{2000};
   std::chrono::milliseconds challengeTimeout{4000};
   std::chrono::milliseconds failResetDelay{2000};
-  std::chrono::milliseconds faceDropoutTolerance{300};
+  std::chrono::milliseconds faceDropoutTolerance{1000};
 };
 
 struct LivenessInput {
@@ -99,6 +108,7 @@ class LivenessFSM {
   std::chrono::steady_clock::time_point smileStartedAt_;
   float baselineYaw_{0.0f};
   float baselineEar_{0.0f};
+  float blinkMinEarDuringClosure_{0.0f};
   float baselineMar_{0.0f};
   bool blinkWasClosed_{false};
   bool blinkBaselineCaptured_{false};
