@@ -2,6 +2,7 @@
 Nayan is a React Native 0.73 application shell for an offline face-authentication workflow. The app uses TypeScript for the React Native layer, Android and iOS native shells, and a shared cross-platform C++ engine compiled through CMake/CocoaPods.
 ---
 <img width="2087" height="1169" alt="image" src="https://github.com/user-attachments/assets/6162a510-7506-443f-8e36-c54207d19c0f" />
+<img width="1892" height="1064" alt="20260605-1820-20 1671103" src="https://github.com/user-attachments/assets/8c24039a-6aa4-4057-8429-b44f7131d9bb" />
 
 ## Android Run
 
