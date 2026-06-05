@@ -1,2 +1,7 @@
-# Path: OfflineFaceAuth/.prettierrc.js
-# Purpose: Prettier configuration for JS/TS code formatting enforcing single quotes, trailing commas, 100-char print width.
+module.exports = {
+  arrowParens: 'avoid',
+  bracketSameLine: true,
+  bracketSpacing: false,
+  singleQuote: true,
+  trailingComma: 'all',
+};

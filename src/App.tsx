@@ -24,51 +24,18 @@ import {
   type SmokeTestResult,
 } from './storage/database/SmokeTest';
 
-type OfflineFaceAuthResult = {
-  accepted: boolean;
-  externalModelProcessed?: boolean;
-  timestampNs: number;
-  sharpnessScore: number;
-  faceMeshProcessed?: boolean;
-  mobileFaceNetProcessed?: boolean;
-  droppedFrameCount?: number;
-  replacedFrameCount?: number;
-  faceMeshThreadCount?: number;
-  mobileFaceNetThreadCount?: number;
-  livenessState?: number;
-  livenessChallenge?: number;
-  faceDetected?: boolean;
-  ear?: number;
-  mar?: number;
-  yaw?: number;
-  pitch?: number;
-  roll?: number;
-  framesProcessed?: number;
-  framesWithFace?: number;
-  embeddingValid?: boolean;
-  embeddingFrameId?: number;
-  embedding: Float32Array;
-  embeddingPreview?: number[];
-  embeddingLength?: number;
-  embeddingByteLength?: number;
-};
+import type {
+  NativeBridgeModule,
+  NativeFaceAuthResult,
+  NativeLivenessChallenge,
+} from './types/native';
 
 type OfflineFaceAuthGlobal = {
-  getLatestResult: () => OfflineFaceAuthResult;
+  getLatestResult: () => NativeFaceAuthResult;
   isInitialized: () => boolean;
   setLivenessState?: (state: number) => boolean;
   setLivenessChallenge?: (challenge: number) => boolean;
 };
-
-type NativeBridgeModule = {
-  initializeEngine: (modelPath?: string) => Promise<void>;
-  ensureJsiInstalled: () => Promise<boolean>;
-  setLivenessPassed?: (passed: boolean) => Promise<void>;
-  setLivenessState?: (state: string) => Promise<void>;
-  setLivenessChallenge?: (challenge: string) => Promise<void>;
-};
-
-type NativeChallenge = 'NONE' | 'BLINK' | 'SMILE' | 'TURN_LEFT' | 'TURN_RIGHT';
 
 const MODEL_PATH = '/sdcard/Download/mobilefacenet.tflite';
 const LIVENESS_STATE_NAMES = [
@@ -86,84 +53,168 @@ const LIVENESS_CHALLENGE_NAMES = [
   'TURN_RIGHT',
 ] as const;
 
+const COLORS = {
+  background: '#050B1A',
+  primary: '#00BFFF',
+  success: '#00FF88',
+  error: '#FF4D4D',
+  glass: 'rgba(255, 255, 255, 0.05)',
+  glassBorder: 'rgba(255, 255, 255, 0.1)',
+  textPrimary: '#FFFFFF',
+  textSecondary: '#94a3b8',
+};
+
 const styles = StyleSheet.create({
-  root: {flex: 1, backgroundColor: '#0f172a'},
-  scrollContent: {padding: 24},
-  header: {fontSize: 28, fontWeight: '700', color: '#f8fafc', marginBottom: 8},
-  subheader: {fontSize: 15, color: '#cbd5e1', marginBottom: 24},
-  card: {
-    backgroundColor: '#111827',
-    borderRadius: 16,
-    padding: 16,
-    marginBottom: 16,
-    borderWidth: 1,
-    borderColor: '#1f2937',
+  root: {flex: 1, backgroundColor: COLORS.background},
+  scrollContent: {paddingHorizontal: 20, paddingBottom: 40},
+  headerSection: {
+    marginTop: 20,
+    marginBottom: 24,
+    alignItems: 'center',
+  },
+  logoText: {
+    fontSize: 12,
+    fontWeight: '900',
+    color: COLORS.primary,
+    letterSpacing: 4,
+    marginBottom: 8,
+    textTransform: 'uppercase',
+  },
+  header: {
+    fontSize: 24,
+    fontWeight: '800',
+    color: COLORS.textPrimary,
+    textAlign: 'center',
+  },
+  subheader: {
+    fontSize: 14,
+    color: COLORS.textSecondary,
+    textAlign: 'center',
+    marginTop: 4,
+    lineHeight: 20,
   },
   cameraSection: {
-    marginBottom: 16,
-  },
-  cameraLabel: {
-    color: '#e2e8f0',
-    fontSize: 14,
-    fontWeight: '700',
-    marginBottom: 8,
-  },
-  label: {fontSize: 13, color: '#94a3b8', marginBottom: 6},
-  value: {fontSize: 16, color: '#f8fafc', fontWeight: '600'},
-  button: {
-    backgroundColor: '#2563eb',
-    borderRadius: 14,
-    paddingVertical: 14,
-    paddingHorizontal: 18,
-    alignItems: 'center',
-    marginBottom: 16,
-  },
-  secondaryButton: {
-    backgroundColor: '#0f766e',
-  },
-  passButton: {
-    backgroundColor: '#7c3aed',
+    marginBottom: 24,
+    borderRadius: 20,
+    overflow: 'hidden',
+    backgroundColor: '#000',
+    borderWidth: 1,
+    borderColor: COLORS.glassBorder,
+    shadowColor: COLORS.primary,
+    shadowOffset: {width: 0, height: 4},
+    shadowOpacity: 0.2,
+    shadowRadius: 10,
+    elevation: 5,
   },
   challengeGrid: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    gap: 8,
-    marginBottom: 16,
+    margin: -6,
+    marginBottom: 18,
   },
   challengeButton: {
     flexGrow: 1,
-    flexBasis: '48%',
-    backgroundColor: '#334155',
-    borderRadius: 12,
-    paddingVertical: 12,
-    paddingHorizontal: 10,
+    flexBasis: '45%',
+    backgroundColor: COLORS.glass,
+    borderRadius: 16,
+    paddingVertical: 14,
     alignItems: 'center',
+    borderWidth: 1,
+    borderColor: COLORS.glassBorder,
+    margin: 6,
   },
   challengeButtonText: {
-    color: '#f8fafc',
-    fontSize: 13,
-    fontWeight: '800',
+    color: COLORS.textPrimary,
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  mainActions: {
+    marginBottom: 12,
+  },
+  button: {
+    backgroundColor: COLORS.primary,
+    borderRadius: 16,
+    paddingVertical: 16,
+    alignItems: 'center',
+    flexDirection: 'row',
+    justifyContent: 'center',
+    shadowColor: COLORS.primary,
+    shadowOffset: {width: 0, height: 4},
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    elevation: 4,
+    marginBottom: 12,
+  },
+  passButton: {
+    backgroundColor: 'transparent',
+    borderWidth: 1,
+    borderColor: COLORS.success,
+  },
+  secondaryButton: {
+    backgroundColor: 'transparent',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.2)',
   },
   disabledButton: {
-    opacity: 0.6,
+    opacity: 0.5,
   },
-  buttonText: {color: '#eff6ff', fontSize: 16, fontWeight: '700'},
+  buttonText: {
+    color: COLORS.textPrimary,
+    fontSize: 16,
+    fontWeight: '700',
+    letterSpacing: 0.5,
+  },
+  passButtonText: {
+    color: COLORS.success,
+  },
   console: {
-    backgroundColor: '#020617',
-    borderRadius: 16,
+    backgroundColor: 'rgba(0, 0, 0, 0.4)',
+    borderRadius: 20,
     borderWidth: 1,
-    borderColor: '#1e293b',
+    borderColor: COLORS.glassBorder,
     padding: 16,
-    minHeight: 260,
+    minHeight: 200,
+    marginBottom: 24,
   },
-  statusSection: {
-    marginTop: 16,
+  consoleHeader: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: COLORS.primary,
+    marginBottom: 8,
+    textTransform: 'uppercase',
+    letterSpacing: 1,
   },
   consoleText: {
-    color: '#bfdbfe',
+    color: '#E2E8F0',
     fontFamily: 'monospace',
+    fontSize: 12,
+    lineHeight: 18,
+  },
+  statusSection: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'space-between',
+  },
+  card: {
+    backgroundColor: COLORS.glass,
+    borderRadius: 16,
+    padding: 12,
+    borderWidth: 1,
+    borderColor: COLORS.glassBorder,
+    width: '48%',
+    marginBottom: 12,
+  },
+  label: {
+    fontSize: 10,
+    color: COLORS.textSecondary,
+    marginBottom: 4,
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+  },
+  value: {
     fontSize: 13,
-    lineHeight: 19,
+    color: COLORS.textPrimary,
+    fontWeight: '700',
   },
 });
 
@@ -178,13 +229,13 @@ function readGlobalEngine(): OfflineFaceAuthGlobal | undefined {
     .__offlineFaceAuth;
 }
 
-function readEmbedding(result: OfflineFaceAuthResult): Float32Array {
+function readEmbedding(result: NativeFaceAuthResult): Float32Array {
   return result.embedding instanceof Float32Array
     ? result.embedding
     : new Float32Array();
 }
 
-function isUsableEmbedding(result: OfflineFaceAuthResult): boolean {
+function isUsableEmbedding(result: NativeFaceAuthResult): boolean {
   const embedding = readEmbedding(result);
   return (
     (result.embeddingValid === true || result.accepted === true) &&
@@ -192,11 +243,11 @@ function isUsableEmbedding(result: OfflineFaceAuthResult): boolean {
   );
 }
 
-function formatResult(result: OfflineFaceAuthResult): string {
+function formatResult(result: NativeFaceAuthResult): string {
   const embedding = readEmbedding(result);
   const embeddingArray = Array.from(embedding);
   const preview = isUsableEmbedding(result)
-    ? embeddingArray.slice(0, 16).map((value) => value.toFixed(6))
+    ? embeddingArray.slice(0, 16).map(value => value.toFixed(6))
     : [];
   const livenessStateName =
     LIVENESS_STATE_NAMES[result.livenessState ?? 0] ?? 'UNKNOWN';
@@ -240,7 +291,7 @@ function formatResult(result: OfflineFaceAuthResult): string {
 }
 
 function formatSmokeTestResult(result: SmokeTestResult): string {
-  const lines = result.steps.map((step) => {
+  const lines = result.steps.map(step => {
     const status = step.passed ? 'PASS' : 'FAIL';
     return `${status} ${step.name}: ${step.detail}`;
   });
@@ -261,7 +312,7 @@ function formatStorageSmokeTestResults(
     '',
     `MMKV smoke test: ${mmkvResult.passed ? 'PASS' : 'FAIL'}`,
     `Duration: ${mmkvResult.durationMs}ms`,
-    ...mmkvResult.steps.map((step) => {
+    ...mmkvResult.steps.map(step => {
       const status = step.passed ? 'PASS' : 'FAIL';
       return `${status} ${step.name}: ${step.detail}`;
     }),
@@ -275,7 +326,9 @@ export default function App(): React.JSX.Element {
     useState<boolean>(false);
   const [storageTestRunning, setStorageTestRunning] = useState<boolean>(false);
   const [previewReady, setPreviewReady] = useState<boolean>(false);
-  const [consoleOutput, setConsoleOutput] = useState<string>('Booting verification harness...');
+  const [consoleOutput, setConsoleOutput] = useState<string>(
+    'Booting verification harness...',
+  );
 
   useEffect(() => {
     const unsubscribe = startConnectivityWatcher();
@@ -310,7 +363,9 @@ export default function App(): React.JSX.Element {
           );
         }
 
-        const pluginInstalled = await initializeFrameProcessorBridge(MODEL_PATH);
+        const pluginInstalled = await initializeFrameProcessorBridge(
+          MODEL_PATH,
+        );
         setFrameProcessorPluginReady(pluginInstalled);
 
         const deadline = Date.now() + 3000;
@@ -326,7 +381,7 @@ export default function App(): React.JSX.Element {
             );
             return;
           }
-          await new Promise((resolve) => setTimeout(resolve, 50));
+          await new Promise(resolve => setTimeout(resolve, 50));
         }
 
         const status = refreshStatus();
@@ -414,7 +469,7 @@ export default function App(): React.JSX.Element {
   }, [refreshStatus]);
 
   const handleChallenge = useCallback(
-    async (challenge: NativeChallenge) => {
+    async (challenge: NativeLivenessChallenge) => {
       try {
         await setNativeLivenessChallenge(challenge);
         setConsoleOutput(
@@ -461,20 +516,26 @@ export default function App(): React.JSX.Element {
 
   return (
     <SafeAreaView style={styles.root}>
-      <StatusBar barStyle="light-content" />
+      <StatusBar barStyle="light-content" backgroundColor={COLORS.background} />
       <ScrollView
         contentInsetAdjustmentBehavior="automatic"
-        contentContainerStyle={styles.scrollContent}
-      >
-        <Text style={styles.header}>Offline FaceAuth Harness</Text>
-        <Text style={styles.subheader}>
-          Verifies JNI bootstrap, JSI injection, and zero-copy embedding access.
-        </Text>
+        contentContainerStyle={styles.scrollContent}>
+        <View style={styles.headerSection}>
+          <Text style={styles.logoText}>Nayan Secure</Text>
+          <Text style={styles.header}>Offline FaceAuth Harness</Text>
+          <Text style={styles.subheader}>
+            Verifies JNI bootstrap, JSI injection, and zero-copy embedding
+            access.
+          </Text>
+        </View>
 
         <View style={styles.cameraSection}>
-          <Text style={styles.cameraLabel}>Front Camera Preview</Text>
           <CameraView
-            key={frameProcessorPluginReady ? 'processor-ready' : 'processor-waiting'}
+            key={
+              frameProcessorPluginReady
+                ? 'processor-ready'
+                : 'processor-waiting'
+            }
             isActive={frameProcessorPluginReady}
             onPreviewReady={() => setPreviewReady(true)}
           />
@@ -483,66 +544,69 @@ export default function App(): React.JSX.Element {
         <View style={styles.challengeGrid}>
           <TouchableOpacity
             style={styles.challengeButton}
-            onPress={() => handleChallenge('BLINK')}
-          >
+            onPress={() => handleChallenge('BLINK')}>
             <Text style={styles.challengeButtonText}>Start Blink</Text>
           </TouchableOpacity>
           <TouchableOpacity
             style={styles.challengeButton}
-            onPress={() => handleChallenge('TURN_LEFT')}
-          >
+            onPress={() => handleChallenge('TURN_LEFT')}>
             <Text style={styles.challengeButtonText}>Start Turn Left</Text>
           </TouchableOpacity>
           <TouchableOpacity
             style={styles.challengeButton}
-            onPress={() => handleChallenge('TURN_RIGHT')}
-          >
+            onPress={() => handleChallenge('TURN_RIGHT')}>
             <Text style={styles.challengeButtonText}>Start Turn Right</Text>
           </TouchableOpacity>
           <TouchableOpacity
             style={styles.challengeButton}
-            onPress={() => handleChallenge('NONE')}
-          >
-            <Text style={styles.challengeButtonText}>Reset Liveness</Text>
+            onPress={() => handleChallenge('NONE')}>
+            <Text style={[styles.challengeButtonText, {color: COLORS.primary}]}>
+              Reset Liveness
+            </Text>
           </TouchableOpacity>
         </View>
 
-        <TouchableOpacity style={styles.button} onPress={handleLoopback}>
-          <Text style={styles.buttonText}>Read Latest Native Result</Text>
-        </TouchableOpacity>
+        <View style={styles.mainActions}>
+          <TouchableOpacity style={styles.button} onPress={handleLoopback}>
+            <Text style={styles.buttonText}>Read Latest Native Result</Text>
+          </TouchableOpacity>
 
-        <TouchableOpacity
-          style={[styles.button, styles.passButton]}
-          onPress={handleMarkLivenessPassed}
-        >
-          <Text style={styles.buttonText}>Mark Liveness Passed</Text>
-        </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.button, styles.passButton]}
+            onPress={handleMarkLivenessPassed}>
+            <Text style={[styles.buttonText, styles.passButtonText]}>
+              Mark Liveness Passed
+            </Text>
+          </TouchableOpacity>
 
-        <TouchableOpacity
-          disabled={storageTestRunning}
-          style={[
-            styles.button,
-            styles.secondaryButton,
-            storageTestRunning && styles.disabledButton,
-          ]}
-          onPress={handleStorageSmokeTest}
-        >
-          <Text style={styles.buttonText}>
-            {storageTestRunning
-              ? 'Running Storage Smoke Tests'
-              : 'Run Storage Smoke Tests'}
-          </Text>
-        </TouchableOpacity>
+          <TouchableOpacity
+            disabled={storageTestRunning}
+            style={[
+              styles.button,
+              styles.secondaryButton,
+              storageTestRunning && styles.disabledButton,
+            ]}
+            onPress={handleStorageSmokeTest}>
+            <Text style={[styles.buttonText, {color: COLORS.textSecondary}]}>
+              {storageTestRunning
+                ? 'Running Storage Smoke Tests'
+                : 'Run Storage Smoke Tests'}
+            </Text>
+          </TouchableOpacity>
+        </View>
 
         <View style={styles.console}>
+          <Text style={styles.consoleHeader}>System Console</Text>
           <Text style={styles.consoleText}>{consoleOutput}</Text>
         </View>
 
         <View style={styles.statusSection}>
-          {summary.map((item) => (
+          {summary.map(item => (
             <View key={item.label} style={styles.card}>
               <Text style={styles.label}>{item.label}</Text>
-              <Text style={styles.value}>{item.value}</Text>
+              <Text style={styles.value} numberOfLines={1} ellipsizeMode="tail">
+                {item.value}
+              </Text>
             </View>
           ))}
         </View>
