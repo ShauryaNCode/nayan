@@ -148,7 +148,7 @@ describe('T3.1 SQLCipher setup', () => {
       location: undefined,
       encryptionKey: 'derived-passphrase',
     });
-    expect(openResult.migrationResult?.latestVersion).toBe(3);
+    expect(openResult.migrationResult?.latestVersion).toBe(5);
     expect(statements.slice(0, 5)).toEqual([
       'PRAGMA journal_mode=WAL;',
       'PRAGMA synchronous=NORMAL;',
@@ -184,7 +184,7 @@ describe('T3.1 SQLCipher setup', () => {
 
     const migrationResult = runMigrations(db as any);
 
-    expect(migrationResult.applied).toHaveLength(4);
+    expect(migrationResult.applied).toHaveLength(5);
     expect(statements).toContain('BEGIN IMMEDIATE;');
     expect(
       statements.some((statement) =>

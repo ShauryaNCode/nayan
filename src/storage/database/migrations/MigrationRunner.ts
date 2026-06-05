@@ -6,6 +6,7 @@ import {initialSchemaMigration} from './001_initial_schema';
 import {personEmbeddingCryptoMigration} from './002_person_embedding_crypto';
 import {syncQueueMigration} from './003_sync_queue';
 import {ledgerMonotonicClockMigration} from './003_ledger_monotonic_clock';
+import {erasureLedgerSupportMigration} from './005_erasure_ledger_support';
 import {executeSql, getRows} from '../SQLiteCompat';
 
 export interface Migration {
@@ -30,6 +31,7 @@ export const migrations: Migration[] = [
   personEmbeddingCryptoMigration,
   syncQueueMigration,
   ledgerMonotonicClockMigration,
+  erasureLedgerSupportMigration,
 ];
 
 const CREATE_MIGRATIONS_TABLE_SQL = `

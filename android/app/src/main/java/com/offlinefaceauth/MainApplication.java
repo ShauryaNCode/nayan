@@ -29,6 +29,7 @@ public final class MainApplication extends Application implements ReactApplicati
         protected List<ReactPackage> getPackages() {
           final List<ReactPackage> packages = new ArrayList<>(new PackageList(this).getPackages());
           packages.add(new NativeBridgePackage());
+          packages.add(new DeviceIdentityPackage());
           return packages;
         }
 

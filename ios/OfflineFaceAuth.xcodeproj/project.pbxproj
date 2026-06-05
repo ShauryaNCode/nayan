@@ -13,6 +13,8 @@
 		13B07FBF1A68108700A75B9A /* Images.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 13B07FB51A68108700A75B9A /* Images.xcassets */; };
 		13B07FC11A68108700A75B9A /* main.m in Sources */ = {isa = PBXBuildFile; fileRef = 13B07FB71A68108700A75B9A /* main.m */; };
 		A3F6D5B82E994C02A710E5A1 /* SecureEnclaveManager.m in Sources */ = {isa = PBXBuildFile; fileRef = A3F6D5B72E994C02A710E5A1 /* SecureEnclaveManager.m */; };
+		D37A3E100000000000000001 /* DeviceIdentityModule.swift in Sources */ = {isa = PBXBuildFile; fileRef = D37A3E100000000000000003 /* DeviceIdentityModule.swift */; };
+		D37A3E100000000000000002 /* DeviceIdentityModule.m in Sources */ = {isa = PBXBuildFile; fileRef = D37A3E100000000000000004 /* DeviceIdentityModule.m */; };
 		F3C3E4000F3C3E400F3C3E40 /* NativeUptimeClock.m in Sources */ = {isa = PBXBuildFile; fileRef = F3C3E4010F3C3E400F3C3E40 /* NativeUptimeClock.m */; };
 		7699B88040F8A987B510C191 /* libPods-OfflineFaceAuth-OfflineFaceAuthTests.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 19F6CBCC0A4E27FBF8BF4A61 /* libPods-OfflineFaceAuth-OfflineFaceAuthTests.a */; };
 		81AB9BB82411601600AC10FF /* LaunchScreen.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 81AB9BB72411601600AC10FF /* LaunchScreen.storyboard */; };
@@ -40,6 +42,8 @@
 		13B07FB71A68108700A75B9A /* main.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; name = main.m; path = OfflineFaceAuth/main.m; sourceTree = "<group>"; };
 		A3F6D5B62E994C02A710E5A1 /* SecureEnclaveManager.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; name = SecureEnclaveManager.h; path = OfflineFaceAuth/native/SecureEnclaveManager.h; sourceTree = "<group>"; };
 		A3F6D5B72E994C02A710E5A1 /* SecureEnclaveManager.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; name = SecureEnclaveManager.m; path = OfflineFaceAuth/native/SecureEnclaveManager.m; sourceTree = "<group>"; };
+		D37A3E100000000000000003 /* DeviceIdentityModule.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeviceIdentityModule.swift; sourceTree = "<group>"; };
+		D37A3E100000000000000004 /* DeviceIdentityModule.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = DeviceIdentityModule.m; sourceTree = "<group>"; };
 		F3C3E4010F3C3E400F3C3E40 /* NativeUptimeClock.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; name = NativeUptimeClock.m; path = OfflineFaceAuth/native/NativeUptimeClock.m; sourceTree = "<group>"; };
 		19F6CBCC0A4E27FBF8BF4A61 /* libPods-OfflineFaceAuth-OfflineFaceAuthTests.a */ = {isa = PBXFileReference; explicitFileType = archive.ar; includeInIndex = 0; path = "libPods-OfflineFaceAuth-OfflineFaceAuthTests.a"; sourceTree = BUILT_PRODUCTS_DIR; };
 		3B4392A12AC88292D35C810B /* Pods-OfflineFaceAuth.debug.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-OfflineFaceAuth.debug.xcconfig"; path = "Target Support Files/Pods-OfflineFaceAuth/Pods-OfflineFaceAuth.debug.xcconfig"; sourceTree = "<group>"; };
@@ -100,6 +104,8 @@
 				A3F6D5B62E994C02A710E5A1 /* SecureEnclaveManager.h */,
 				A3F6D5B72E994C02A710E5A1 /* SecureEnclaveManager.m */,
 				F3C3E4010F3C3E400F3C3E40 /* NativeUptimeClock.m */,
+				D37A3E100000000000000003 /* DeviceIdentityModule.swift */,
+				D37A3E100000000000000004 /* DeviceIdentityModule.m */,
 			);
 			name = OfflineFaceAuth;
 			sourceTree = "<group>";
@@ -403,6 +409,8 @@
 				13B07FBC1A68108700A75B9A /* AppDelegate.mm in Sources */,
 				A3F6D5B82E994C02A710E5A1 /* SecureEnclaveManager.m in Sources */,
 				F3C3E4000F3C3E400F3C3E40 /* NativeUptimeClock.m in Sources */,
+				D37A3E100000000000000001 /* DeviceIdentityModule.swift in Sources */,
+				D37A3E100000000000000002 /* DeviceIdentityModule.m in Sources */,
 				13B07FC11A68108700A75B9A /* main.m in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;

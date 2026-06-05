@@ -8,6 +8,7 @@ export type NativeSecureKeyModule = {
     personnelId: string,
     wrappedDEKBase64: string,
   ) => Promise<string>;
+  destroyPersonKey?: (personnelId: string) => Promise<void>;
   deletePersonKey?: (personnelId: string) => Promise<void>;
 };
 
@@ -45,6 +46,16 @@ export const NativeSecureKey = {
     wrappedDEKBase64: string,
   ): Promise<string> {
     return getNativeModule().unwrapDEK(personnelId, wrappedDEKBase64);
+  },
+
+  async destroyPersonKey(personnelId: string): Promise<void> {
+    const module = getNativeModule();
+    if (typeof module.destroyPersonKey !== 'function') {
+      throw new Error(
+        '[NativeSecureKey] destroyPersonKey is unavailable. Rebuild the app after adding T3.6 native modules.',
+      );
+    }
+    await module.destroyPersonKey(personnelId);
   },
 
   async deletePersonKey(personnelId: string): Promise<void> {

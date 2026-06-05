@@ -163,6 +163,42 @@ RCT_REMAP_METHOD(deletePersonKey,
   reject(@"E_PERSON_KEY_DELETE", @"Failed to delete person key", error);
 }
 
+RCT_REMAP_METHOD(destroyPersonKey,
+                 destroyPersonKeyWithPersonnelId:(NSString *)personnelId
+                 resolver:(RCTPromiseResolveBlock)resolve
+                 rejecter:(RCTPromiseRejectBlock)reject)
+{
+  NSString *alias = [self personKeyAliasForPersonnelId:personnelId];
+  if (alias == nil) {
+    reject(@"KEY_DESTROY_FAILED", @"personnelId must not be empty", nil);
+    return;
+  }
+
+  NSData *tag = [alias dataUsingEncoding:NSUTF8StringEncoding];
+  NSDictionary *query = @{
+    (__bridge id)kSecClass : (__bridge id)kSecClassKey,
+    (__bridge id)kSecAttrApplicationTag : tag,
+    (__bridge id)kSecAttrKeyType : (__bridge id)kSecAttrKeyTypeECSECPrimeRandom
+  };
+
+  OSStatus status = SecItemDelete((__bridge CFDictionaryRef)query);
+  if (status == errSecItemNotFound) {
+    reject(@"KEY_NOT_FOUND",
+           [NSString stringWithFormat:@"No key found for personnelId: %@", personnelId],
+           nil);
+    return;
+  }
+  if (status != errSecSuccess) {
+    NSError *error = [NSError errorWithDomain:NSOSStatusErrorDomain code:status userInfo:nil];
+    reject(@"KEY_DESTROY_FAILED",
+           [NSString stringWithFormat:@"SecItemDelete failed: %d", (int)status],
+           error);
+    return;
+  }
+
+  resolve(nil);
+}
+
 RCT_REMAP_METHOD(wrapDEK,
                  wrapDEKWithPersonnelId:(NSString *)personnelId
                  dekHex:(NSString *)dekHex

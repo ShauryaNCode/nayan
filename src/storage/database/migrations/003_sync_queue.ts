@@ -15,7 +15,7 @@ import type {Migration} from './MigrationRunner';
  *   updated_at   – ISO-8601 last-modified timestamp
  */
 export const syncQueueMigration: Migration = {
-  version: 3,
+  version: 4,
   name: 'sync_queue',
   statements: [
     `
