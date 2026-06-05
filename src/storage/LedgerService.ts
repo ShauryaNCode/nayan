@@ -8,7 +8,7 @@ import {
   utf8FromBytes,
   utf8ToBytes,
 } from '../utils/BufferUtils';
-import {CanonicalJSON} from '../utils/CanonicalJSON';
+import {CanonicalJSON} from '../utils/canonicalJSON';
 import {uuid_v4} from '../utils/uuid';
 import {getDatabase} from './database/DatabaseManager';
 import {executeSql, getFirstRow, getRows} from './database/SQLiteCompat';

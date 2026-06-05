@@ -41,7 +41,7 @@ jest.mock('../storage/database/DatabaseManager', () => ({
 
 import {SHA256} from '../crypto/SHA256';
 import {LedgerService, type VerifyChainResult} from '../storage/LedgerService';
-import {CanonicalJSON} from '../utils/CanonicalJSON';
+import {CanonicalJSON} from '../utils/canonicalJSON';
 
 type LedgerFixtureRow = {
   id: string;
