@@ -10,6 +10,11 @@ import {
   View,
 } from 'react-native';
 import {startConnectivityWatcher} from './sync/connectivity/ConnectivityWatcher';
+import {
+  closeDatabase,
+  openProductionDatabase,
+} from './storage/database/DatabaseManager';
+import {WALCheckpointScheduler} from './storage/WALCheckpointScheduler';
 
 import {CameraView} from './components/camera/CameraView';
 import {
@@ -279,7 +284,27 @@ export default function App(): React.JSX.Element {
 
   useEffect(() => {
     const unsubscribe = startConnectivityWatcher();
+    let cancelled = false;
+
+    const startStorage = async () => {
+      try {
+        await openProductionDatabase();
+        if (cancelled) {
+          closeDatabase();
+          return;
+        }
+        WALCheckpointScheduler.start();
+      } catch (error) {
+        console.warn('[App] Production database startup failed.', error);
+      }
+    };
+
+    void startStorage();
+
     return () => {
+      cancelled = true;
+      WALCheckpointScheduler.stop();
+      closeDatabase();
       unsubscribe();
     };
   }, []);

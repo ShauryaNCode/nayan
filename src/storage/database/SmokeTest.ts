@@ -166,7 +166,7 @@ export async function runSQLCipherSmokeTest(): Promise<SmokeTestResult> {
       const pragmaState = configureDatabasePragmas(db);
       const walEnabled = pragmaState.journalMode === 'wal';
       const synchronousNormal = pragmaState.synchronous === 1;
-      const autocheckpointEnabled = pragmaState.walAutocheckpoint === 100;
+      const autocheckpointDisabled = pragmaState.walAutocheckpoint === 0;
       const cacheSized = pragmaState.cacheSizeKiB === -8000;
       const foreignKeysEnabled = pragmaState.foreignKeys;
       steps.push({
@@ -174,7 +174,7 @@ export async function runSQLCipherSmokeTest(): Promise<SmokeTestResult> {
         passed:
           walEnabled &&
           synchronousNormal &&
-          autocheckpointEnabled &&
+          autocheckpointDisabled &&
           cacheSized &&
           foreignKeysEnabled,
         detail:
@@ -188,7 +188,7 @@ export async function runSQLCipherSmokeTest(): Promise<SmokeTestResult> {
       if (
         !walEnabled ||
         !synchronousNormal ||
-        !autocheckpointEnabled ||
+        !autocheckpointDisabled ||
         !cacheSized ||
         !foreignKeysEnabled
       ) {

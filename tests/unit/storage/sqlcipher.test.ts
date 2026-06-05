@@ -12,7 +12,7 @@ const mockNativeModule = {
 jest.mock('react-native', () => ({
   NativeModules: {
     NativeBridge: mockNativeModule,
-    SecureEnclaveManager: undefined,
+    SecureEnclaveManager: mockNativeModule,
   },
   Platform: {
     OS: 'android',
@@ -36,18 +36,20 @@ jest.mock('@op-engineering/op-sqlite', () => ({
   open: jest.fn(),
 }));
 
-import {open} from '@op-engineering/op-sqlite';
+const {open} = require('@op-engineering/op-sqlite');
 
-import {
+const {
   configureDatabasePragmas,
   closeDatabase,
   openDatabaseWithState,
-} from '../../../src/storage/database/DatabaseManager';
-import {runMigrations} from '../../../src/storage/database/migrations/MigrationRunner';
-import {
+} = require('../../../src/storage/database/DatabaseManager');
+const {
+  runMigrations,
+} = require('../../../src/storage/database/migrations/MigrationRunner');
+const {
   clearCachedSQLCipherPassphraseForTests,
   deriveSQLCipherPassphrase,
-} from '../../../src/storage/encryption/KeyDerivation';
+} = require('../../../src/storage/encryption/KeyDerivation');
 
 type QueryResult = {
   rowsAffected: number;
@@ -64,7 +66,9 @@ function result(rows: Array<Record<string, unknown>> = []): QueryResult {
 function createFakeDb(existingMigrations: number[] = []) {
   const statements: string[] = [];
   const db = {
-    close: jest.fn(),
+    close: jest.fn(() => {
+      statements.push('CLOSE;');
+    }),
     executeSync: jest.fn((sql: string) => {
       const normalized = sql.trim();
       statements.push(normalized);
@@ -72,8 +76,11 @@ function createFakeDb(existingMigrations: number[] = []) {
       if (normalized === 'PRAGMA journal_mode=WAL;') {
         return result([{journal_mode: 'wal'}]);
       }
-      if (normalized === 'PRAGMA wal_autocheckpoint=100;') {
-        return result([{wal_autocheckpoint: 100}]);
+      if (normalized === 'PRAGMA wal_autocheckpoint=0;') {
+        return result([{wal_autocheckpoint: 0}]);
+      }
+      if (normalized === 'PRAGMA wal_checkpoint(PASSIVE);') {
+        return result([{busy: 0, log: 0, checkpointed: 0}]);
       }
       if (normalized === 'PRAGMA synchronous;') {
         return result([{synchronous: 1}]);
@@ -114,14 +121,14 @@ describe('T3.1 SQLCipher setup', () => {
     expect(pragmaState).toEqual({
       journalMode: 'wal',
       synchronous: 1,
-      walAutocheckpoint: 100,
+      walAutocheckpoint: 0,
       cacheSizeKiB: -8000,
       foreignKeys: true,
     });
     expect(statements.slice(0, 5)).toEqual([
       'PRAGMA journal_mode=WAL;',
       'PRAGMA synchronous=NORMAL;',
-      'PRAGMA wal_autocheckpoint=100;',
+      'PRAGMA wal_autocheckpoint=0;',
       'PRAGMA cache_size=-8000;',
       'PRAGMA foreign_keys=ON;',
     ]);
@@ -145,7 +152,7 @@ describe('T3.1 SQLCipher setup', () => {
     expect(statements.slice(0, 5)).toEqual([
       'PRAGMA journal_mode=WAL;',
       'PRAGMA synchronous=NORMAL;',
-      'PRAGMA wal_autocheckpoint=100;',
+      'PRAGMA wal_autocheckpoint=0;',
       'PRAGMA cache_size=-8000;',
       'PRAGMA foreign_keys=ON;',
     ]);
@@ -156,12 +163,28 @@ describe('T3.1 SQLCipher setup', () => {
     ).toBeGreaterThan(4);
   });
 
+  it('runs a final PASSIVE checkpoint before closing the database', () => {
+    const {db, statements} = createFakeDb();
+    (open as jest.Mock).mockReturnValue(db);
+
+    openDatabaseWithState({
+      name: 'face_auth.test.db',
+      encryptionKey: 'derived-passphrase',
+    });
+    closeDatabase();
+
+    expect(statements.slice(-2)).toEqual([
+      'PRAGMA wal_checkpoint(PASSIVE);',
+      'CLOSE;',
+    ]);
+  });
+
   it('applies the initial schema migration once', () => {
     const {db, statements} = createFakeDb();
 
     const migrationResult = runMigrations(db as any);
 
-    expect(migrationResult.applied).toHaveLength(3);
+    expect(migrationResult.applied).toHaveLength(4);
     expect(statements).toContain('BEGIN IMMEDIATE;');
     expect(
       statements.some((statement) =>
