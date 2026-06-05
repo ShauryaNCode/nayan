@@ -7,6 +7,7 @@
 
 import { getDelay } from '../connectivity/BackoffEngine';
 import { LedgerService, type VerifyChainResult } from '../../storage/LedgerService';
+import { WALCheckpointScheduler } from '../../storage/WALCheckpointScheduler';
 import {
   readNext,
   updateStatus,
@@ -71,6 +72,7 @@ async function uploadWithRetry(item: QueueItem, chain: VerifyChainResult): Promi
       // Update DB state
       updateStatus(item.id, 'DONE');
       item.status = 'DONE';
+      WALCheckpointScheduler.runNow();
 
       return { success: true, uploaded: true, item, upload, chain };
     } catch (error) {

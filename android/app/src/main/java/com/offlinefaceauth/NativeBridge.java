@@ -286,6 +286,21 @@ public final class NativeBridge extends ReactContextBaseJavaModule {
   }
 
   @ReactMethod
+  public void destroyPersonKey(String personnelId, Promise promise) {
+    try {
+      if (!KeystoreManager.deletePersonAesGcmKey(personnelId)) {
+        promise.reject(
+            "KEY_NOT_FOUND",
+            "No key found for personnelId: " + personnelId);
+        return;
+      }
+      promise.resolve(null);
+    } catch (Throwable throwable) {
+      promise.reject("KEY_DESTROY_FAILED", throwable.getMessage(), throwable);
+    }
+  }
+
+  @ReactMethod
   public void wrapDEK(String personnelId, String dekHex, Promise promise) {
     byte[] dek = null;
 

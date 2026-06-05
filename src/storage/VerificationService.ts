@@ -86,7 +86,7 @@ export const VerificationService = {
     personnelId: string;
     embedding: Float32Array;
   }>> {
-    const {LSHIndex} = await import('./LSHIndex');
+    const {LSHIndex} = require('./LSHIndex') as typeof import('./LSHIndex');
     return LSHIndex.query({liveEmbedding});
   },
 };

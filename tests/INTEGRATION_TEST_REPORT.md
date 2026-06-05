@@ -41,7 +41,7 @@ Time:        1.928 s
 | **Total** | | **6 / 6** | **~22 ms** |
 
 **Observations:**
-- `journal_mode=wal`, `synchronous=1`, `wal_autocheckpoint=100`, `cache_size=-8000`, `foreign_keys=true` — all pragma assertions pass ✅
+- `journal_mode=wal`, `synchronous=1`, `wal_autocheckpoint=0`, `cache_size=-8000`, `foreign_keys=true` — all pragma assertions pass ✅
 - Migration runner applies `001_initial_schema` + `002_person_embedding_crypto` (latestVersion=2) ✅
 - Singleton guard emits `console.warn` on double-open (expected) ✅
 

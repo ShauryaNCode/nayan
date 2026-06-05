@@ -15,7 +15,7 @@ They run synchronously before migrations or application-level reads/writes:
 ```ts
 db.executeSync('PRAGMA journal_mode=WAL;');
 db.executeSync('PRAGMA synchronous=NORMAL;');
-db.executeSync('PRAGMA wal_autocheckpoint=100;');
+db.executeSync('PRAGMA wal_autocheckpoint=0;');
 db.executeSync('PRAGMA cache_size=-8000;');
 db.executeSync('PRAGMA foreign_keys=ON;');
 ```

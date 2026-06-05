@@ -31,7 +31,7 @@ jest.mock('@op-engineering/op-sqlite', () => {
         const pragmaValues: Record<string, unknown> = {
           journal_mode: 'wal',
           synchronous: 1,
-          wal_autocheckpoint: 100,
+          wal_autocheckpoint: 0,
           cache_size: -8000,
           foreign_keys: 1,
         };
@@ -88,7 +88,7 @@ describe('Enrollment Flow – Integration', () => {
     expect(result.db).toBeDefined();
     expect(result.pragmaState.journalMode).toBe('wal');
     expect(result.pragmaState.synchronous).toBe(1);
-    expect(result.pragmaState.walAutocheckpoint).toBe(100);
+    expect(result.pragmaState.walAutocheckpoint).toBe(0);
     expect(result.pragmaState.foreignKeys).toBe(true);
   });
 

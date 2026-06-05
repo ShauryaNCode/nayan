@@ -1,5 +1,6 @@
 import React, {useCallback, useEffect, useMemo, useState} from 'react';
 import {
+  AppState,
   NativeModules,
   SafeAreaView,
   ScrollView,
@@ -9,7 +10,15 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
+import type {AppStateStatus} from 'react-native';
 import {startConnectivityWatcher} from './sync/connectivity/ConnectivityWatcher';
+import {
+  closeDatabase,
+  openProductionDatabase,
+} from './storage/database/DatabaseManager';
+import {ErasureService} from './storage/ErasureService';
+import {WALCheckpointScheduler} from './storage/WALCheckpointScheduler';
+import {getDevicePublicKey} from './services/deviceKey';
 
 import {CameraView} from './components/camera/CameraView';
 import {
@@ -332,7 +341,65 @@ export default function App(): React.JSX.Element {
 
   useEffect(() => {
     const unsubscribe = startConnectivityWatcher();
+    let currentAppState = AppState.currentState;
+    let cancelled = false;
+
+    const drainReceiptQueue = async () => {
+      const receiptDrainResult = await ErasureService.drainPendingReceipts();
+      if (receiptDrainResult.failed.length > 0) {
+        console.warn(
+          '[RECEIPT QUEUE] Failed to upload deletion receipts:',
+          receiptDrainResult.failed,
+        );
+      }
+    };
+
+    const appStateSubscription = AppState.addEventListener(
+      'change',
+      (nextState: AppStateStatus) => {
+        const returningToForeground =
+          currentAppState === 'background' || currentAppState === 'inactive';
+        currentAppState = nextState;
+
+        if (returningToForeground && nextState === 'active') {
+          void drainReceiptQueue().catch((error) => {
+            console.warn('[RECEIPT QUEUE] Foreground retry failed:', error);
+          });
+        }
+      },
+    );
+
+    const startStorage = async () => {
+      try {
+        await openProductionDatabase();
+        if (cancelled) {
+          closeDatabase();
+          return;
+        }
+        void getDevicePublicKey().catch((error) => {
+          console.warn('[DEVICE KEY] Device identity initialization failed:', error);
+        });
+        WALCheckpointScheduler.start();
+        const drainResult = await ErasureService.drainOfflineQueue();
+        if (drainResult.failed.length > 0) {
+          console.warn(
+            '[ERASURE QUEUE] Failed to drain erasures:',
+            drainResult.failed,
+          );
+        }
+        await drainReceiptQueue();
+      } catch (error) {
+        console.warn('[App] Production database startup failed.', error);
+      }
+    };
+
+    void startStorage();
+
     return () => {
+      cancelled = true;
+      WALCheckpointScheduler.stop();
+      closeDatabase();
+      appStateSubscription.remove();
       unsubscribe();
     };
   }, []);

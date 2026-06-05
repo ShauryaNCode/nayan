@@ -72,8 +72,10 @@ export function configureDatabasePragmas(db: DB): DatabasePragmaState {
   executeSql(db, 'PRAGMA synchronous=NORMAL;');
   const walAutocheckpointResult = executeSql(
     db,
-    'PRAGMA wal_autocheckpoint=100;',
+    'PRAGMA wal_autocheckpoint=0;',
   );
+  // Autocheckpoint disabled. WAL is managed manually by WALCheckpointScheduler.
+  // See src/storage/WALCheckpointScheduler.ts.
   executeSql(db, 'PRAGMA cache_size=-8000;');
   executeSql(db, 'PRAGMA foreign_keys=ON;');
 
@@ -116,9 +118,9 @@ function assertPragmaState(state: DatabasePragmaState): void {
     );
   }
 
-  if (state.walAutocheckpoint !== 100) {
+  if (state.walAutocheckpoint !== 0) {
     throw new Error(
-      `[DatabaseManager] wal_autocheckpoint=100 was not applied (value=${state.walAutocheckpoint}).`,
+      `[DatabaseManager] wal_autocheckpoint=0 was not applied (value=${state.walAutocheckpoint}).`,
     );
   }
 
@@ -263,6 +265,11 @@ export function getDatabaseOpenState(): DatabaseOpenResult | null {
 
 export function closeDatabase(): void {
   if (currentDb) {
+    try {
+      executeSql(currentDb, 'PRAGMA wal_checkpoint(PASSIVE);');
+    } catch (_) {
+      // Closing should still release the connection if the final checkpoint fails.
+    }
     currentDb.close();
     currentDb = null;
     currentOpenResult = null;

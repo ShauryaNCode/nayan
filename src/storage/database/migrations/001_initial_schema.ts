@@ -25,24 +25,21 @@ export const initialSchemaMigration: Migration = {
     `
       CREATE TABLE IF NOT EXISTS attendance_ledger (
         ledger_id TEXT PRIMARY KEY,
-        personnel_id TEXT NOT NULL,
+        personnel_id TEXT,
         event_type TEXT NOT NULL
-          CHECK (event_type IN ('check_in', 'check_out', 'verification')),
+          CHECK (event_type IN ('check_in', 'check_out', 'verification', 'erasure')),
         captured_at TEXT NOT NULL,
         device_id TEXT NOT NULL,
         confidence REAL,
         liveness_score REAL,
         payload_json TEXT NOT NULL,
+        payload_hash TEXT,
         previous_hash TEXT NOT NULL,
         current_hash TEXT NOT NULL UNIQUE,
         chain_index INTEGER NOT NULL UNIQUE,
         synced INTEGER NOT NULL DEFAULT 0 CHECK (synced IN (0, 1)),
         synced_at TEXT,
-        created_at TEXT NOT NULL,
-        FOREIGN KEY (personnel_id)
-          REFERENCES personnel(personnel_id)
-          ON UPDATE CASCADE
-          ON DELETE RESTRICT
+        created_at TEXT NOT NULL
       );
     `,
     `

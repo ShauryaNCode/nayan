@@ -14,7 +14,11 @@ import {getDatabase} from './database/DatabaseManager';
 import {executeSql, getFirstRow, getRows} from './database/SQLiteCompat';
 import {EventCounter} from './EventCounter';
 
-export type LedgerEventType = 'ENROLLMENT' | 'VERIFICATION' | 'REJECTION';
+export type LedgerEventType =
+  | 'ENROLLMENT'
+  | 'VERIFICATION'
+  | 'REJECTION'
+  | 'ERASURE';
 
 export type RecordEventParams = {
   personnelId: string;
@@ -42,12 +46,16 @@ type PersonnelKeyRow = {
 type LedgerRow = {
   id?: string;
   personnel_id?: string;
+  payload_json?: string;
   encrypted_payload?: string;
+  payload_hash?: string;
   prev_hash?: string;
   current_hash?: string;
   ts?: number;
   uptime_ms?: number;
   event_counter?: number;
+  consent_withdrawn?: number;
+  event_type?: string;
   [index: number]: unknown;
 };
 
@@ -183,9 +191,11 @@ function fetchPreviousHash(): string {
 function insertLedgerRows(params: {
   ledgerId: string;
   personnelId: string;
+  databaseEventType: string;
   deviceId: string;
   matchScore: number | null;
-  encryptedPayload: string;
+  encryptedPayload: string | null;
+  payloadHash: string;
   prevHash: string;
   currentHash: string;
   ts: number;
@@ -211,6 +221,7 @@ function insertLedgerRows(params: {
           confidence,
           liveness_score,
           payload_json,
+          payload_hash,
           encrypted_payload,
           previous_hash,
           prev_hash,
@@ -228,11 +239,12 @@ function insertLedgerRows(params: {
         params.ledgerId,
         params.ledgerId,
         params.personnelId,
-        LEGACY_EVENT_TYPE,
+        params.databaseEventType,
         capturedAt,
         params.deviceId,
         params.matchScore,
         REDACTED_PAYLOAD_MARKER,
+        params.payloadHash,
         params.encryptedPayload,
         params.prevHash,
         params.prevHash,
@@ -288,27 +300,31 @@ async function recordEventInternal(
 
   const prevHash = fetchPreviousHash();
   const canonicalPayload = CanonicalJSON.stringify(payload);
+  const payloadHash = SHA256.digest(canonicalPayload);
   const currentHash = SHA256.digest(
     [
       prevHash,
-      canonicalPayload,
+      payloadHash,
       String(ts),
       String(uptimeMs),
       String(eventCounter),
     ].join('|'),
   );
   const sessionHash = SHA256.digest(`${ts}|${uptimeMs}|${ledgerId}`);
-  const encryptedPayload = await encryptLedgerPayload(
-    canonicalPayload,
-    params.personnelId,
-  );
+  const encryptedPayload =
+    params.eventType === 'ERASURE'
+      ? null
+      : await encryptLedgerPayload(canonicalPayload, params.personnelId);
 
   insertLedgerRows({
     ledgerId,
     personnelId: params.personnelId,
+    databaseEventType:
+      params.eventType === 'ERASURE' ? 'erasure' : LEGACY_EVENT_TYPE,
     deviceId: params.deviceId,
     matchScore: params.matchScore ?? null,
     encryptedPayload,
+    payloadHash,
     prevHash,
     currentHash,
     ts,
@@ -334,6 +350,8 @@ export async function recordEvent(
   return next;
 }
 
+export const insertLedgerEvent = recordEvent;
+
 function buildBrokenResult(
   rows: LedgerRow[],
   index: number,
@@ -345,7 +363,7 @@ function buildBrokenResult(
     brokenAt: {
       index,
       ledgerId: String(row.id ?? row[0] ?? ''),
-      event_counter: Number(row.event_counter ?? row[7] ?? 0),
+      event_counter: Number(row.event_counter ?? row[9] ?? 0),
     },
   };
 }
@@ -358,62 +376,102 @@ export async function verifyChain(): Promise<VerifyChainResult> {
       SELECT
         ledger_id AS id,
         personnel_id,
+        payload_json,
         encrypted_payload,
+        payload_hash,
         COALESCE(prev_hash, previous_hash) AS prev_hash,
         current_hash,
         ts,
         uptime_ms,
-        event_counter
+        event_counter,
+        consent_withdrawn,
+        event_type
       FROM attendance_ledger
       WHERE event_counter IS NOT NULL
-        AND encrypted_payload IS NOT NULL
       ORDER BY event_counter ASC;
     `,
   );
   const rows = getRows(result) as LedgerRow[];
   const dekCache = new Map<string, string>();
   let prevHash = GENESIS_HASH;
+  let expectedEventCounter = 1;
+  let previousTs: number | null = null;
 
   try {
     for (let i = 0; i < rows.length; i += 1) {
       const row = rows[i];
       const personnelId = readString(row, 'personnel_id', 1);
-      const encryptedPayload = readString(row, 'encrypted_payload', 2);
-      const rowPrevHash = readString(row, 'prev_hash', 3);
-      const currentHash = readString(row, 'current_hash', 4);
-      const ts = readNumber(row, 'ts', 5);
-      const uptimeMs = readNumber(row, 'uptime_ms', 6);
-      const eventCounter = readNumber(row, 'event_counter', 7);
+      const payloadJson = readString(row, 'payload_json', 2);
+      const encryptedPayload = readString(row, 'encrypted_payload', 3);
+      const payloadHash = readString(row, 'payload_hash', 4);
+      const rowPrevHash = readString(row, 'prev_hash', 5);
+      const currentHash = readString(row, 'current_hash', 6);
+      const ts = readNumber(row, 'ts', 7);
+      const uptimeMs = readNumber(row, 'uptime_ms', 8);
+      const eventCounter = readNumber(row, 'event_counter', 9);
+      const eventType = readString(row, 'event_type', 11);
 
       if (
-        !personnelId ||
-        !encryptedPayload ||
         !rowPrevHash ||
         !currentHash ||
         ts === undefined ||
         uptimeMs === undefined ||
         eventCounter === undefined ||
+        !Number.isInteger(eventCounter) ||
+        eventCounter !== expectedEventCounter ||
+        (previousTs !== null && ts < previousTs) ||
         rowPrevHash !== prevHash
       ) {
         return buildBrokenResult(rows, i, row);
       }
 
-      let payload: Record<string, unknown>;
-      try {
-        const payloadJson = await decryptLedgerPayload(
-          encryptedPayload,
-          personnelId,
-          dekCache,
-        );
-        payload = JSON.parse(payloadJson) as Record<string, unknown>;
-      } catch (_) {
-        return buildBrokenResult(rows, i, row);
+      let hashInput: string;
+      if (payloadHash) {
+        hashInput = payloadHash;
+        if (personnelId && encryptedPayload) {
+          try {
+            const payloadJson = await decryptLedgerPayload(
+              encryptedPayload,
+              personnelId,
+              dekCache,
+            );
+            if (SHA256.digest(payloadJson) !== payloadHash) {
+              return buildBrokenResult(rows, i, row);
+            }
+          } catch (_) {
+            return buildBrokenResult(rows, i, row);
+          }
+        } else if (
+          payloadJson &&
+          payloadJson !== REDACTED_PAYLOAD_MARKER &&
+          eventType?.toLowerCase() !== 'erasure'
+        ) {
+          if (SHA256.digest(payloadJson) !== payloadHash) {
+            return buildBrokenResult(rows, i, row);
+          }
+        }
+      } else {
+        if (!personnelId || !encryptedPayload) {
+          return buildBrokenResult(rows, i, row);
+        }
+
+        try {
+          const payloadJson = await decryptLedgerPayload(
+            encryptedPayload,
+            personnelId,
+            dekCache,
+          );
+          const payload = JSON.parse(payloadJson) as Record<string, unknown>;
+          hashInput = CanonicalJSON.stringify(payload);
+        } catch (_) {
+          return buildBrokenResult(rows, i, row);
+        }
       }
 
       const expected = SHA256.digest(
         [
           prevHash,
-          CanonicalJSON.stringify(payload),
+          hashInput,
           String(ts),
           String(uptimeMs),
           String(eventCounter),
@@ -425,6 +483,8 @@ export async function verifyChain(): Promise<VerifyChainResult> {
       }
 
       prevHash = currentHash;
+      previousTs = ts;
+      expectedEventCounter = eventCounter + 1;
     }
   } finally {
     for (const personnelId of dekCache.keys()) {
@@ -451,6 +511,7 @@ export async function recordVerificationEvent(params: {
 }
 
 export const LedgerService = {
+  insertLedgerEvent,
   recordEvent,
   recordVerificationEvent,
   verifyChain,
